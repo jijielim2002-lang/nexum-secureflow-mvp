@@ -179,7 +179,7 @@ export async function POST(req: NextRequest) {
   });
 
   // ── BL → shipment_trackings (server-side, bypasses client RLS) ───────────────
-  let trackingResult: { created: boolean; updated: boolean } | { error: string } | null = null;
+  let trackingResult: { created: boolean; updated: boolean } | null = null;
   if (document_type === "Bill of Lading") {
     trackingResult = await pushBLToTracking(supabase, job_reference, extractedData, confidence, now);
   }
@@ -217,7 +217,7 @@ async function pushBLToTracking(supabase: any, jobRef: string, data: Record<stri
 
   if (Object.keys(patch).length === 0) {
     console.warn("[document-extract] pushBLToTracking: no fields extracted from BL");
-    return { error: "no BL fields extracted" };
+    return { created: false, updated: false };
   }
 
   const latestLoc = data.port_of_loading || data.port_of_discharge || null;
@@ -230,7 +230,7 @@ async function pushBLToTracking(supabase: any, jobRef: string, data: Record<stri
 
   if (selectErr) {
     console.error("[document-extract] shipment_trackings SELECT error:", selectErr.message, selectErr.code);
-    return { error: `select failed: ${selectErr.message}` };
+    return { created: false, updated: false };
   }
 
   if (existing) {
@@ -246,7 +246,7 @@ async function pushBLToTracking(supabase: any, jobRef: string, data: Record<stri
     }).eq("job_reference", jobRef);
     if (updateErr) {
       console.error("[document-extract] shipment_trackings UPDATE error:", updateErr.message, updateErr.code);
-      return { error: `update failed: ${updateErr.message} (code: ${updateErr.code})` };
+      return { created: false, updated: false };
     }
     console.log("[document-extract] shipment_trackings UPDATED for", jobRef);
     return { created: false, updated: true };
@@ -266,7 +266,7 @@ async function pushBLToTracking(supabase: any, jobRef: string, data: Record<stri
     });
     if (insertErr) {
       console.error("[document-extract] shipment_trackings INSERT error:", insertErr.message, insertErr.code);
-      return { error: `insert failed: ${insertErr.message} (code: ${insertErr.code})` };
+      return { created: false, updated: false };
     }
     console.log("[document-extract] shipment_trackings INSERTED for", jobRef);
     return { created: true, updated: false };

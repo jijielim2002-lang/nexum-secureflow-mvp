@@ -207,17 +207,19 @@ export async function POST(req: NextRequest) {
     disputeId = (newDispute as { id: string } | null)?.id ?? null;
 
     // Create a workflow task for admin
-    await db.from("workflow_tasks").insert({
-      job_reference: jobRef,
-      task_type:     "Review Dispute",
-      title:         `Document validation failed — Job ${jobRef}`,
-      description:   reason,
-      assigned_role: "admin",
-      priority:      "High",
-      status:        "Open",
-      created_at:    now,
-      updated_at:    now,
-    }).catch(() => {});
+    try {
+      await db.from("workflow_tasks").insert({
+        job_reference: jobRef,
+        task_type:     "Review Dispute",
+        title:         `Document validation failed — Job ${jobRef}`,
+        description:   reason,
+        assigned_role: "admin",
+        priority:      "High",
+        status:        "Open",
+        created_at:    now,
+        updated_at:    now,
+      });
+    } catch { /* non-critical */ }
 
   } else if (existingDispute.status === "Open") {
     // Update reason on existing open dispute
@@ -234,15 +236,17 @@ export async function POST(req: NextRequest) {
     .eq("job_reference", jobRef);
 
   // Audit log
-  await db.from("audit_logs").insert({
-    job_reference: jobRef,
-    actor_role:    "system",
-    actor_name:    "Nexum Document Validator",
-    action:        "document_validation_failed",
-    description:   `Document validation failed for ${job.service_type} job. ${reason}`,
-    metadata:      { missing_docs: missingDocs, failed_docs: failedDocs, dispute_id: disputeId },
-    created_at:    now,
-  }).catch(() => {});
+  try {
+    await db.from("audit_logs").insert({
+      job_reference: jobRef,
+      actor_role:    "system",
+      actor_name:    "Nexum Document Validator",
+      action:        "document_validation_failed",
+      description:   `Document validation failed for ${job.service_type} job. ${reason}`,
+      metadata:      { missing_docs: missingDocs, failed_docs: failedDocs, dispute_id: disputeId },
+      created_at:    now,
+    });
+  } catch { /* non-critical */ }
 
   return NextResponse.json({
     validated:      false,

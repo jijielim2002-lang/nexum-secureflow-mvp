@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { AuthProvider } from "@/contexts/AuthContext";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -27,7 +28,22 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col bg-slate-950">
+        <AuthProvider>
+          <div className="flex flex-col flex-1">
+            {children}
+          </div>
+        </AuthProvider>
+        <footer className="border-t border-slate-800 bg-slate-950 px-6 py-3 text-center text-[10px] text-slate-700">
+          Nexum SecureFlow · Pilot Mode · Workflow coordination tool only · Not a regulated financial service
+          {" · "}
+          <a href="/terms/pilot" className="hover:text-slate-500 transition-colors">Pilot Terms</a>
+          {" · "}
+          <a href="/terms/payment-workflow" className="hover:text-slate-500 transition-colors">Payment Workflow</a>
+          {" · "}
+          <a href="/terms/financing-simulation" className="hover:text-slate-500 transition-colors">Financing Simulation</a>
+        </footer>
+      </body>
     </html>
   );
 }

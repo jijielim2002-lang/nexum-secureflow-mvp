@@ -179,21 +179,18 @@ export async function POST(req: NextRequest) {
   });
 
   // ── BL → shipment_trackings (server-side, bypasses client RLS) ───────────────
-  let trackingResult: { created: boolean; updated: boolean } | null = null;
   if (document_type === "Bill of Lading") {
-    trackingResult = await pushBLToTracking(supabase, job_reference, extractedData, confidence, now);
+    await pushBLToTracking(supabase, job_reference, extractedData, confidence, now);
   }
 
   // ── Document validation (check mandatory docs, update job status) ─────────────
-  const validationResult = await validateMandatoryDocs(supabase, job_reference, now);
+  await validateMandatoryDocs(supabase, job_reference, now);
 
   return NextResponse.json({
     success:    true,
     data:       extractedData,
     confidence,
     source,
-    tracking:   trackingResult,
-    validation: validationResult,
   });
 }
 

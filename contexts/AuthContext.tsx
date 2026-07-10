@@ -75,7 +75,7 @@ function getDevBypassRole(): string | null {
 type DBRow<T> = { data: T | null; error: { message: string } | null };
 
 // Timeout wrapper: clears the timer immediately when the promise resolves.
-const PROFILE_FETCH_MS = 8_000;
+const PROFILE_FETCH_MS = 15_000;
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {

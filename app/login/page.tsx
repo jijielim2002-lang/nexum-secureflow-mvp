@@ -15,7 +15,7 @@ const IS_LOCAL_DEV =
 // Auth and profile timeouts — these are the OUTER races.
 // The Supabase client also has a per-fetch AbortController (25 s) in supabaseClient.ts.
 const AUTH_TIMEOUT_MS    = IS_LOCAL_DEV ? 30_000 : 20_000;
-const PROFILE_TIMEOUT_MS = IS_LOCAL_DEV ? 15_000 :  8_000;
+const PROFILE_TIMEOUT_MS = IS_LOCAL_DEV ? 15_000 : 15_000;
 
 const ROLE_REDIRECT: Record<Profile["role"], string> = {
   admin:            "/admin",

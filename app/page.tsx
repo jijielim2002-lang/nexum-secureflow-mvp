@@ -3,21 +3,21 @@ import Link from "next/link";
 const steps = [
   {
     number: "01",
-    title: "Create secured logistics job",
+    title: "Create a secured logistics job",
     description:
-      "Service providers create a job with payment terms, milestones, and required documentation. Funds are held in escrow until conditions are met.",
+      "Service providers create a job with payment terms, milestones, and required documentation. Payment obligations are logged to Nexum's designated payment account before any service begins.",
   },
   {
     number: "02",
     title: "Customer accepts payment terms",
     description:
-      "The customer reviews the job scope, agrees to payment terms, and confirms the engagement — all before any service begins.",
+      "The customer reviews the job scope, agrees to payment terms, and confirms the engagement. Payment is secured subject to Nexum verification of actual receipt.",
   },
   {
     number: "03",
     title: "Track milestones and payment status",
     description:
-      "Both parties track real-time progress. Payments are released automatically as each milestone is verified and approved.",
+      "Both parties track real-time progress. Payments follow a controlled release workflow — each milestone is verified by admin before release approval is granted.",
   },
 ];
 
@@ -140,10 +140,21 @@ export default function HomePage() {
             </div>
           </div>
         </section>
+
+        {/* Disclaimer */}
+        <section className="border-t border-slate-800 bg-slate-900/20 px-6 py-10">
+          <div className="mx-auto max-w-3xl text-center">
+            <p className="text-xs leading-relaxed text-slate-600">
+              Nexum SecureFlow is a pilot workflow coordination tool. Payment will only be treated as
+              secured after Nexum verifies actual receipt into the designated payment account.
+              Release of funds requires admin release approval and is not automatic.
+            </p>
+          </div>
+        </section>
       </main>
 
       <footer className="border-t border-slate-800 py-8 text-center text-xs text-slate-600">
-        Nexum SecureFlow &mdash; MVP build &mdash; no database connected
+        Nexum SecureFlow &mdash; Payment Assurance Platform &mdash; &copy; 2025 Nexum Axis
       </footer>
     </div>
   );

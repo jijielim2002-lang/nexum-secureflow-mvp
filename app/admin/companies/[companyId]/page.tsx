@@ -507,6 +507,9 @@ function CompanyDetail({ companyId }: { companyId: string }) {
                 )}
               </Section>
 
+              {/* ── Approval Panel ──────────────────────────────────────────── */}
+              <CompanyApprovalPanel companyId={companyId} currentStatus={company.status ?? "Pending Review"} onStatusChange={loadCompany} />
+
               {/* Membership */}
               {memStatus === "idle" || memStatus === "loading" ? null :
                memStatus === "error" ? (
@@ -817,6 +820,167 @@ function ScoreRow({ label, score }: { label: string; score: number | null | unde
       <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
         <div className={`h-full rounded-full ${bar} transition-all`} style={{ width: `${score}%` }} />
       </div>
+    </div>
+  );
+}
+
+// ─── Company Approval Panel ───────────────────────────────────────────────────
+
+interface ApprovalLog {
+  id: string;
+  action: string;
+  previous_status: string | null;
+  new_status: string | null;
+  actor_name: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  "Pending Review": "border-amber-700 bg-amber-900/30 text-amber-300",
+  "Info Required":  "border-orange-700 bg-orange-900/30 text-orange-300",
+  "Approved":       "border-emerald-700 bg-emerald-900/30 text-emerald-300",
+  "Active":         "border-emerald-700 bg-emerald-900/30 text-emerald-300",
+  "Rejected":       "border-red-800 bg-red-900/30 text-red-400",
+  "Suspended":      "border-orange-800 bg-orange-900/30 text-orange-400",
+  "Blacklisted":    "border-red-900 bg-red-950/60 text-red-500",
+};
+
+function CompanyApprovalPanel({
+  companyId,
+  currentStatus,
+  onStatusChange,
+}: {
+  companyId: string;
+  currentStatus: string;
+  onStatusChange: () => void;
+}) {
+  const { session } = useAuth();
+  const [logs, setLogs] = useState<ApprovalLog[]>([]);
+  const [logsLoaded, setLogsLoaded] = useState(false);
+  const [action, setAction] = useState("");
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  const authHeader = useCallback(async () => {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token ?? session?.access_token ?? "";
+    return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  }, [session]);
+
+  const loadLogs = useCallback(async () => {
+    const headers = await authHeader();
+    const res = await fetch(`/api/admin/company-approval?company_id=${companyId}`, { headers });
+    const json = await res.json();
+    setLogs(json.logs ?? []);
+    setLogsLoaded(true);
+  }, [companyId, authHeader]);
+
+  useEffect(() => { loadLogs(); }, [loadLogs]);
+
+  async function handleSubmit() {
+    if (!action) { setMsg({ type: "err", text: "Select an action." }); return; }
+    setSaving(true);
+    setMsg(null);
+    try {
+      const headers = await authHeader();
+      const res = await fetch("/api/admin/company-approval", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          company_id: companyId,
+          action,
+          notes: notes || undefined,
+          rejection_reason: action === "Rejected" ? notes : undefined,
+        }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error ?? "Failed");
+      setMsg({ type: "ok", text: `Company status → ${json.new_status}` });
+      setAction("");
+      setNotes("");
+      await loadLogs();
+      onStatusChange();
+    } catch (e) {
+      setMsg({ type: "err", text: e instanceof Error ? e.message : "Error" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const colorClass = STATUS_COLORS[currentStatus] ?? "border-slate-700 bg-slate-800/40 text-slate-400";
+
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
+      <h2 className="mb-4 text-xs font-semibold uppercase tracking-wider text-slate-500">Registration Approval</h2>
+
+      {/* Current status badge */}
+      <div className={`mb-4 rounded-lg border px-3 py-2 text-sm font-semibold ${colorClass}`}>
+        Status: {currentStatus}
+      </div>
+
+      {/* Action form */}
+      <div className="space-y-3">
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">Action</label>
+          <select
+            value={action}
+            onChange={(e) => setAction(e.target.value)}
+            className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100"
+          >
+            <option value="">— select —</option>
+            <option value="Approved">✓ Approve</option>
+            <option value="Rejected">✗ Reject</option>
+            <option value="Info Required">⚠ Request More Info</option>
+            <option value="Suspended">⏸ Suspend</option>
+            <option value="Reinstated">↺ Reinstate</option>
+            <option value="Blacklisted">🚫 Blacklist</option>
+            <option value="Note Added">📝 Add Note Only</option>
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">
+            Notes {action === "Rejected" || action === "Info Required" ? "(required)" : "(optional)"}
+          </label>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={2}
+            placeholder={action === "Rejected" ? "Reason for rejection…" : action === "Info Required" ? "What info is needed…" : "Internal note…"}
+            className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:border-blue-600 focus:outline-none"
+          />
+        </div>
+
+        {msg && (
+          <p className={`text-xs ${msg.type === "ok" ? "text-emerald-400" : "text-red-400"}`}>{msg.text}</p>
+        )}
+
+        <button
+          onClick={handleSubmit}
+          disabled={saving || !action}
+          className="w-full rounded-lg bg-blue-700 py-2 text-sm font-semibold text-white hover:bg-blue-600 disabled:opacity-40 transition-colors"
+        >
+          {saving ? "Saving…" : "Submit"}
+        </button>
+      </div>
+
+      {/* Audit log */}
+      {logsLoaded && logs.length > 0 && (
+        <div className="mt-5 border-t border-slate-800 pt-4">
+          <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-600">Approval History</p>
+          <div className="space-y-2">
+            {logs.slice(0, 6).map((log) => (
+              <div key={log.id} className="text-xs text-slate-500">
+                <span className="text-slate-400 font-medium">{log.action}</span>
+                {log.new_status && <span className="ml-1 text-slate-600">→ {log.new_status}</span>}
+                {log.notes && <span className="ml-1 italic">"{log.notes}"</span>}
+                <span className="ml-1 text-slate-700">· {log.actor_name ?? "Admin"} · {log.created_at.slice(0, 10)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,10 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+
   // Skip TypeScript type-checking during builds (errors are caught locally/in CI).
   // Remove this once all API route types are cleaned up.
   typescript: { ignoreBuildErrors: true },
-  eslint:     { ignoreDuringBuilds: true },
 
   // Required for Docker/VPS deployment — produces .next/standalone with node server.js
   output: process.env.DOCKER_BUILD === "true" ? "standalone" : undefined,

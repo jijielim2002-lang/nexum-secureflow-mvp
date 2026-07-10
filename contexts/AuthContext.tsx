@@ -4,18 +4,18 @@ import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
 
 // ─── Profile type ─────────────────────────────────────────────────────────────
-// Production profiles table guaranteed columns: id, email, role.
-// All other fields are optional — may not exist depending on which migrations ran.
+// All fields are REQUIRED for backward compatibility with existing admin pages.
+// Fields not present in the minimal production schema (full_name, company_name,
+// company_id, created_at) are populated with safe empty-string / null defaults.
 
 export interface Profile {
-  id:            string;
-  email:         string;
-  role:          "admin" | "service_provider" | "customer" | "capital_partner";
-  // Optional — present when the column exists in the DB
-  full_name?:    string;
-  company_name?: string;
-  company_id?:   string | null;
-  created_at?:   string;
+  id:           string;
+  email:        string;
+  role:         "admin" | "service_provider" | "customer" | "capital_partner";
+  full_name:    string;
+  company_name: string;
+  company_id:   string | null;
+  created_at:   string;
 }
 
 interface AuthContextValue {
@@ -28,10 +28,6 @@ interface AuthContextValue {
 }
 
 // ─── Dev bypass ───────────────────────────────────────────────────────────────
-
-const IS_DEV_ENV =
-  process.env.NODE_ENV === "development" ||
-  process.env.NEXT_PUBLIC_APP_ENV === "local";
 
 export const DEV_BYPASS_KEY = "nexum_dev_bypass";
 
@@ -75,13 +71,12 @@ function getDevBypassRole(): string | null {
 
 type DBRow<T> = { data: T | null; error: { message: string } | null };
 
-// Only the columns guaranteed to exist in any production schema version.
+// Only columns confirmed to exist in production: id, email, role.
 // Do NOT include company_id, full_name, company_name, status, updated_at.
 type MinRow = { id: string; email: string | null; role: string };
 
 // ─── Timeout wrapper ──────────────────────────────────────────────────────────
 
-// 15 s for browser-side fetch; server fallback has its own timeout.
 const PROFILE_FETCH_MS = 15_000;
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -95,7 +90,7 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 }
 
 // ─── Server-side fallback ─────────────────────────────────────────────────────
-// Called when the browser-side query times out or returns no row.
+// Called when browser-side query times out or returns no row.
 // Uses /api/auth/profile which runs with the service-role key (bypasses RLS).
 
 async function fetchProfileViaAPI(userId: string): Promise<MinRow | null> {
@@ -135,8 +130,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const VALID_ROLES = ["admin", "service_provider", "customer", "capital_partner"];
 
     try {
-      // ── Phase 1: browser-side fetch (minimum columns) ────────────────────────
-      // Selects only id, email, role — columns confirmed to exist in production.
+      // ── Phase 1: browser-side fetch (minimum columns only) ───────────────────
+      // Selects only id, email, role — confirmed to exist in production schema.
+      // Does NOT select: company_id, full_name, company_name, status, updated_at.
       // If this times out or returns null, falls back to /api/auth/profile.
       let minRow: MinRow | null = null;
       let via: "browser" | "api" = "browser";
@@ -166,7 +162,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } catch (apiErr) {
           const apiMsg = apiErr instanceof Error ? apiErr.message : String(apiErr);
           console.error("[AuthContext] API fallback failed:", apiMsg);
-          // Surface the original browser error as the visible error
           if (!mounted.current) return;
           setProfile(null);
           setProfileError(
@@ -179,19 +174,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // ── If browser returned null, try API to distinguish missing vs RLS ──────
+      // ── If browser returned null, try API to distinguish RLS vs missing ───────
       if (!minRow && via === "browser") {
-        console.warn("[AuthContext] browser returned no row — checking via API to distinguish RLS vs missing");
+        console.warn("[AuthContext] browser returned no row — checking via API");
         try {
           const apiRow = await fetchProfileViaAPI(userId);
-          if (apiRow) {
-            minRow = apiRow;
-            via    = "api";
-            console.log("[AuthContext] API found row (browser was RLS-blocked)");
-          }
-        } catch {
-          // ignore API error; fall through to "no profile row" handling
-        }
+          if (apiRow) { minRow = apiRow; via = "api"; }
+        } catch { /* ignore; fall through to "no profile row" */ }
       }
 
       if (!minRow) {
@@ -207,10 +196,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         ? (minRow.role as Profile["role"])
         : "customer";
 
+      // Build profile with safe defaults for fields not in the minimal schema.
+      // This preserves backward compatibility with admin pages that access these fields.
       const built: Profile = {
-        id:    userId,
+        id:           userId,
         role,
-        email: minRow.email ?? userEmail ?? "",
+        email:        minRow.email ?? userEmail ?? "",
+        full_name:    "",
+        company_name: "",
+        company_id:   null,
+        created_at:   new Date().toISOString(),
       };
 
       console.log("[AuthContext] profile resolved: role=" + built.role + " via=" + via);
@@ -233,7 +228,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     mounted.current = true;
 
-    // Dev bypass: skip Supabase entirely, inject mock profile
     const bypassRole = getDevBypassRole();
     if (bypassRole) {
       const bp = BYPASS_PROFILES[bypassRole] ?? BYPASS_PROFILES.admin;
@@ -242,21 +236,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser({
         id: bp.id, email: bp.email,
         app_metadata: {}, user_metadata: {},
-        aud: "authenticated", created_at: bp.created_at ?? new Date().toISOString(),
+        aud: "authenticated", created_at: bp.created_at,
       } as unknown as User);
       setProfile(bp);
       setLoading(false);
       return () => { mounted.current = false; };
     }
 
-    // Safety timer: unblocks the UI if onAuthStateChange + fetchProfile never
-    // resolve. Set to 22s = 15s browser fetch + 8s API fallback + buffer.
+    // Safety timer: 15s browser + 8s API fallback + buffer = 25s
     const safetyTimer = setTimeout(() => {
       if (mounted.current) {
-        console.warn("[AuthContext] safety timeout after 22s — unblocking UI");
+        console.warn("[AuthContext] safety timeout after 25s — unblocking UI");
         setLoading(false);
       }
-    }, 22_000);
+    }, 25_000);
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
@@ -278,7 +271,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setProfileWarning(null);
         }
 
-        // Clear safety timer AFTER fetchProfile finishes (success or error)
         clearTimeout(safetyTimer);
         if (mounted.current) setLoading(false);
       },

@@ -10,13 +10,13 @@ import { DEV_BYPASS_KEY } from "@/contexts/AuthContext";
 // 45 s for auth — Supabase GoTrue cold-start can legitimately take 30–40 s.
 // Timeout is always cleared after the auth promise resolves so it doesn't linger.
 
-const SIGNIN_TIMEOUT_MS  = 45_000;
-const PROFILE_TIMEOUT_MS = 15_000;
+const SIGNIN_TIMEOUT_MS  = 120_000;
+const PROFILE_TIMEOUT_MS = 30_000;
 
 const SIGNIN_TIMEOUT_MSG =
-  "Sign-in timed out after 45 seconds. Supabase Auth did not respond in time.";
+  "Sign-in timed out after 2 minutes. Supabase Auth did not respond in time.";
 const PROFILE_TIMEOUT_MSG =
-  "Profile fetch timed out after 15 seconds.";
+  "Profile fetch timed out after 30 seconds.";
 
 // ─── Admin email fallback (LOCAL DEV ONLY — gated by IS_LOCAL_DEV below) ─────
 // Never applies in staging or production.

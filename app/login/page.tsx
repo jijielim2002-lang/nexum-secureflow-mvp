@@ -6,31 +6,16 @@ import { supabase } from "@/lib/supabaseClient";
 import type { Profile } from "@/contexts/AuthContext";
 import { DEV_BYPASS_KEY } from "@/contexts/AuthContext";
 
-// ─── Timeouts ─────────────────────────────────────────────────────────────────
-// 45 s for auth — Supabase GoTrue cold-start can legitimately take 30–40 s.
-// Timeout is always cleared after the auth promise resolves so it doesn't linger.
-
-const SIGNIN_TIMEOUT_MS  = 30_000;   // outer race; per-fetch AbortController is 25 s
-const PROFILE_TIMEOUT_MS = 15_000;
-
-const SIGNIN_TIMEOUT_MSG =
-  "Sign-in timed out. Supabase Auth did not respond in time. Please try again.";
-const PROFILE_TIMEOUT_MSG =
-  "Profile fetch timed out. Please try again.";
-
-// ─── Admin email fallback (LOCAL DEV ONLY — gated by IS_LOCAL_DEV below) ─────
-// Never applies in staging or production.
-
-const ADMIN_EMAIL = "admin@nexum.test";
-
-// ─── Local dev gate ───────────────────────────────────────────────────────────
-// Must match AuthContext so bypass logic is consistent.
+// ─── Config ──────────────────────────────────────────────────────────────────
 
 const IS_LOCAL_DEV =
-  process.env.NODE_ENV            === "development" ||
+  process.env.NODE_ENV === "development" ||
   process.env.NEXT_PUBLIC_APP_ENV === "local";
 
-// ─── Role redirect map ────────────────────────────────────────────────────────
+// Auth and profile timeouts — these are the OUTER races.
+// The Supabase client also has a per-fetch AbortController (25 s) in supabaseClient.ts.
+const AUTH_TIMEOUT_MS    = IS_LOCAL_DEV ? 30_000 : 20_000;
+const PROFILE_TIMEOUT_MS = IS_LOCAL_DEV ? 15_000 :  8_000;
 
 const ROLE_REDIRECT: Record<Profile["role"], string> = {
   admin:            "/admin",
@@ -39,211 +24,154 @@ const ROLE_REDIRECT: Record<Profile["role"], string> = {
   capital_partner:  "/capital",
 };
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Step types ───────────────────────────────────────────────────────────────
 
-interface AuthError {
-  code?:    string | null;
-  message:  string;
-  details?: string | null;
-  hint?:    string | null;
-}
+type StepId =
+  | "auth_started" | "auth_success" | "auth_failed"
+  | "profile_fetch_started" | "profile_fetch_success" | "profile_fetch_failed"
+  | "redirect_started" | "redirect_done";
 
-interface DiagLine {
-  t:    string;
-  msg:  string;
-  kind: "ok" | "warn" | "error" | "info";
-}
+type StepStatus = "running" | "ok" | "error";
 
-// ─── Error message helpers ────────────────────────────────────────────────────
+interface StepEntry { id: StepId; label: string; status: StepStatus; detail?: string }
 
-function getAuthErrorMessage(raw: string, code?: string | null): string {
-  if (raw === SIGNIN_TIMEOUT_MSG) return raw;
-
-  if (/invalid login credentials|invalid email or password|wrong password/i.test(raw))
-    return "Invalid email or password. Please check your credentials and try again.";
-
-  if (/timed? ?out|timeout/i.test(raw))
-    return "Sign-in timed out. Check your network connection and try again.";
-
-  if (/failed to fetch|network error|connection refused|err_network|unable to reach/i.test(raw))
-    return "Unable to reach Supabase Auth. Check your network or Supabase project status.";
-
-  if (/missing.*env|env.*missing|supabase url|anon.?key/i.test(raw))
-    return "Supabase environment variables are not set. Check NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local.";
-
-  if (/email not confirmed/i.test(raw))
-    return "Email not confirmed. Check your inbox for the confirmation email.";
-
-  if (/user not found/i.test(raw))
-    return "No account found with this email address.";
-
-  if (/too many requests|rate.?limit/i.test(raw))
-    return "Too many login attempts. Wait a few minutes and try again.";
-
-  if (/service.*unavailable|503|502|supabase.*down/i.test(raw))
-    return "Supabase Auth is currently unavailable. Try again in a moment.";
-
-  const suffix = code ? ` (code: ${code})` : "";
-  return `Authentication error: ${raw}${suffix}`;
-}
-
-function formatAuthError(err: AuthError): string {
-  const lines: string[] = [];
-  if (err.code)    lines.push(`Code:    ${err.code}`);
-  lines.push(`Message: ${err.message}`);
-  if (err.details) lines.push(`Details: ${err.details}`);
-  if (err.hint)    lines.push(`Hint:    ${err.hint}`);
-  return lines.join("\n");
-}
-
-// ─── Timeout racers (timer is always cleared after the race resolves) ─────────
-
-type SignInResult = {
-  data:  { user: { id: string; email?: string | null } | null; session: unknown };
-  error: AuthError | null;
+const STEP_LABELS: Record<StepId, string> = {
+  auth_started:          "Connecting to Supabase Auth",
+  auth_success:          "Authentication successful",
+  auth_failed:           "Authentication failed",
+  profile_fetch_started: "Loading admin profile",
+  profile_fetch_success: "Profile loaded",
+  profile_fetch_failed:  "Profile load failed",
+  redirect_started:      "Redirecting",
+  redirect_done:         "Done",
 };
 
-function withSignInTimeout(p: Promise<SignInResult>, ms: number): Promise<SignInResult> {
-  let timerId: ReturnType<typeof setTimeout> | null = null;
-  const race = Promise.race([
-    p,
-    new Promise<SignInResult>((resolve) => {
-      timerId = setTimeout(() => {
-        console.warn(`[Login] sign-in timed out after ${ms} ms`);
-        resolve({ data: { user: null, session: null }, error: { message: SIGNIN_TIMEOUT_MSG } });
-      }, ms);
-    }),
-  ]);
-  return race.then(
-    (result) => { if (timerId !== null) clearTimeout(timerId); return result; },
-    (err)    => { if (timerId !== null) clearTimeout(timerId); throw err; },
-  );
+// ─── Timed promise (clears timer immediately on resolve/reject) ───────────────
+
+function timedPromise<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${ms / 1000}s. Please retry.`)),
+      ms,
+    );
+    p.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
 }
 
-type ProfileResult = { data: { role: string } | null; error: AuthError | null };
+// ─── Health check panel ───────────────────────────────────────────────────────
 
-function withProfileTimeout(p: Promise<ProfileResult>, ms: number): Promise<ProfileResult> {
-  let timerId: ReturnType<typeof setTimeout> | null = null;
-  const race = Promise.race([
-    p,
-    new Promise<ProfileResult>((resolve) => {
-      timerId = setTimeout(() => {
-        console.warn(`[Login] profile fetch timed out after ${ms} ms`);
-        resolve({ data: null, error: { message: PROFILE_TIMEOUT_MSG } });
-      }, ms);
-    }),
-  ]);
-  return race.then(
-    (result) => { if (timerId !== null) clearTimeout(timerId); return result; },
-    (err)    => { if (timerId !== null) clearTimeout(timerId); throw err; },
-  );
+interface HealthResult {
+  ok: boolean; project_ref?: string;
+  env?: { supabase_url: boolean; anon_key: boolean };
+  auth?: { reachable: boolean; response_ms: number; error?: string | null };
+  error?: string;
 }
 
-// ─── Dev-only: Supabase env panel ─────────────────────────────────────────────
-// Shows domain only for URL; YES/NO for anon key. Never shows key values.
+function ConnDiagPanel() {
+  const [status, setStatus] = useState<"idle" | "checking" | "done">("idle");
+  const [result, setResult] = useState<HealthResult | null>(null);
 
-function SupabaseEnvPanel() {
-  if (!IS_LOCAL_DEV) return null;
-
-  const url     = process.env.NEXT_PUBLIC_SUPABASE_URL      ?? "";
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
-  const urlOk   = url.length > 0;
-  const keyOk   = anonKey.length > 0;
-
-  // Extract just the hostname (e.g. myproject.supabase.co) — never show the full URL
-  let urlDomain = "";
-  if (urlOk) {
-    try { urlDomain = new URL(url).hostname; } catch { urlDomain = url; }
-  }
-
-  return (
-    <div className="mt-3 rounded-lg border border-yellow-500/25 bg-yellow-500/5 px-3 py-2.5 text-[11px] font-mono">
-      <p className="mb-1 font-semibold text-yellow-400/90">Supabase env (local dev)</p>
-      <p className={urlOk ? "text-emerald-400" : "text-red-400"}>
-        {urlOk ? "✓" : "✗"} NEXT_PUBLIC_SUPABASE_URL: {urlOk ? `YES (${urlDomain})` : "NOT SET — add to .env.local"}
-      </p>
-      <p className={keyOk ? "text-emerald-400" : "text-red-400"}>
-        {keyOk ? "✓" : "✗"} NEXT_PUBLIC_SUPABASE_ANON_KEY: {keyOk ? "YES" : "NOT SET — add to .env.local"}
-      </p>
-      {urlOk && (
-        <p className="text-slate-500">auth endpoint: {urlDomain}/auth/v1</p>
-      )}
-    </div>
-  );
-}
-
-// ─── Dev-only: Test Supabase Auth Connection button ────────────────────────────
-// Calls supabase.auth.getSession() — no password required.
-// Shows success/fail inline. Dev only; never shown in staging or production.
-
-function TestConnectionButton() {
-  if (!IS_LOCAL_DEV) return null;
-
-  const [status,  setStatus]  = useState<"idle" | "testing" | "ok" | "fail">("idle");
-  const [detail,  setDetail]  = useState("");
-
-  async function handleTest() {
-    setStatus("testing");
-    setDetail("");
+  async function run() {
+    setStatus("checking"); setResult(null);
     try {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) {
-        setStatus("fail");
-        setDetail(error.message);
-      } else {
-        setStatus("ok");
-        setDetail(data.session ? "Active session found" : "No active session (expected for fresh login)");
-      }
+      const res  = await fetch("/api/health/supabase");
+      const json = await res.json() as HealthResult;
+      setResult(json);
     } catch (e) {
-      setStatus("fail");
-      setDetail(e instanceof Error ? e.message : String(e));
+      setResult({ ok: false, error: e instanceof Error ? e.message : String(e) });
     }
+    setStatus("done");
   }
 
   return (
-    <div className="mt-2">
-      <button
-        type="button"
-        onClick={handleTest}
-        disabled={status === "testing"}
-        className="w-full rounded-lg border border-slate-600/50 bg-slate-800/60 py-2 text-[11px] font-semibold text-slate-400 hover:bg-slate-700/60 disabled:opacity-50 transition-colors"
-      >
-        {status === "testing" ? "Testing connection…" : "Test Supabase Auth Connection"}
+    <div className="mt-3">
+      <button type="button" onClick={run} disabled={status === "checking"}
+        className="w-full rounded-lg border border-slate-700/40 bg-slate-900/50 py-2 text-[11px] font-semibold text-slate-600 hover:text-slate-300 hover:bg-slate-800/50 disabled:opacity-40 transition-colors">
+        {status === "checking" ? "Checking..." : "Test Supabase Connection"}
       </button>
-      {status !== "idle" && status !== "testing" && (
-        <p className={`mt-1 text-[10px] font-mono px-1 ${status === "ok" ? "text-emerald-400" : "text-red-400"}`}>
-          {status === "ok" ? "✓ Connected — " : "✗ Failed — "}
-          {detail}
-        </p>
+      {result && (
+        <div className="mt-1.5 rounded-lg border border-slate-700/40 bg-slate-900/60 px-3 py-2 text-[11px] font-mono space-y-0.5">
+          <p className={result.ok ? "text-emerald-400" : "text-red-400"}>
+            {result.ok ? "✓" : "✗"} Supabase {result.ok ? "reachable" : "unreachable"}
+            {result.project_ref ? ` — ${result.project_ref}.supabase.co` : ""}
+          </p>
+          {result.env && (
+            <p className={result.env.supabase_url && result.env.anon_key ? "text-emerald-400" : "text-red-400"}>
+              {result.env.supabase_url && result.env.anon_key ? "✓" : "✗"} Env: URL {result.env.supabase_url ? "YES" : "NO"} · Key {result.env.anon_key ? "YES" : "NO"}
+            </p>
+          )}
+          {result.auth && (
+            <p className={result.auth.reachable ? "text-emerald-400" : "text-red-400"}>
+              {result.auth.reachable ? "✓" : "✗"} Auth: {result.auth.reachable ? `reachable (${result.auth.response_ms}ms)` : result.auth.error ?? "unreachable"}
+            </p>
+          )}
+          {result.error && <p className="text-red-400">Error: {result.error}</p>}
+        </div>
       )}
     </div>
   );
 }
 
-// ─── Diagnostics panel ────────────────────────────────────────────────────────
+// ─── Step progress tracker ────────────────────────────────────────────────────
 
-function DiagPanel({ lines }: { lines: DiagLine[] }) {
-  if (lines.length === 0) return null;
+function StepTracker({ steps }: { steps: StepEntry[] }) {
+  if (steps.length === 0) return null;
   return (
-    <div className="mt-3 rounded-lg border border-slate-700/50 bg-slate-900/80 px-3 py-2.5 text-[11px] font-mono">
-      <p className="mb-1 text-slate-500">Login diagnostics</p>
-      <div className="space-y-0.5">
-        {lines.map((l, i) => (
-          <p key={i} className={
-            l.kind === "ok"    ? "text-emerald-400" :
-            l.kind === "error" ? "text-red-400"     :
-            l.kind === "warn"  ? "text-amber-400"   : "text-slate-400"
-          }>
-            <span className="text-slate-600">{l.t}</span>
-            {" "}{l.msg}
-          </p>
+    <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-3">
+      <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-600">Login progress</p>
+      <div className="space-y-1.5">
+        {steps.map((s) => (
+          <div key={s.id} className="flex items-start gap-2">
+            <span className={`text-xs mt-0.5 flex-shrink-0 ${
+              s.status === "ok" ? "text-emerald-400" :
+              s.status === "error" ? "text-red-400" : "text-blue-400 animate-pulse"
+            }`}>
+              {s.status === "ok" ? "✓" : s.status === "error" ? "✗" : "●"}
+            </span>
+            <div className="min-w-0">
+              <p className={`text-xs ${
+                s.status === "ok" ? "text-slate-300" :
+                s.status === "error" ? "text-red-400" : "text-blue-300"
+              }`}>{s.label}</p>
+              {s.detail && <p className="text-[10px] text-slate-600 font-mono mt-0.5 break-all">{s.detail}</p>}
+            </div>
+          </div>
         ))}
       </div>
     </div>
   );
 }
 
+// ─── Dev bypass panel ─────────────────────────────────────────────────────────
+
+function DevBypassPanel({ onBypass }: { onBypass: (role: string) => void }) {
+  if (!IS_LOCAL_DEV) return null;
+  return (
+    <div className="mt-4">
+      <div className="relative flex items-center py-1">
+        <div className="flex-grow border-t border-slate-800" />
+        <span className="mx-3 text-[10px] text-slate-700">local dev bypass</span>
+        <div className="flex-grow border-t border-slate-800" />
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        {(["admin","service_provider","customer","capital_partner"] as const).map((r) => (
+          <button key={r} type="button" onClick={() => onBypass(r)}
+            className="rounded-lg border border-slate-700/40 bg-slate-800/50 py-1.5 text-[11px] font-semibold text-slate-500 hover:text-slate-300 hover:bg-slate-700/50 transition-all capitalize">
+            {r.replace("_", " ")}
+          </button>
+        ))}
+      </div>
+      <p className="mt-1 text-center text-[10px] text-slate-700">Dev only — bypasses Supabase</p>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
+
+type Phase = "idle" | "auth" | "profile" | "done" | "auth_err" | "profile_err";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -251,221 +179,168 @@ export default function LoginPage() {
   const [email,    setEmail]    = useState("");
   const [password, setPassword] = useState("");
   const [loading,  setLoading]  = useState(false);
+  const [phase,    setPhase]    = useState<Phase>("idle");
+  const [steps,    setSteps]    = useState<StepEntry[]>([]);
+  const [authMsg,  setAuthMsg]  = useState("");
+  const [profMsg,  setProfMsg]  = useState("");
 
-  const [authErrMsg,        setAuthErrMsg]        = useState("");
-  const [profileErrMsg,     setProfileErrMsg]      = useState("");
-  const [profileRepairWarn, setProfileRepairWarn]  = useState("");
-  const [diagLines,         setDiagLines]          = useState<DiagLine[]>([]);
+  const busy       = useRef(false);
+  const redirected = useRef(false);
 
-  const submitting  = useRef(false);
-  const didRedirect = useRef(false);
-  const t0Ref       = useRef(0);
-
-  function diag(msg: string, kind: DiagLine["kind"] = "info") {
-    const t = ((performance.now() - t0Ref.current) / 1000).toFixed(2) + "s";
-    console.log(`[Login ${t}] [${kind}] ${msg}`);
-    setDiagLines((prev) => [...prev, { t, msg, kind }]);
+  function setStep(id: StepId, status: StepStatus, detail?: string) {
+    setSteps(prev => {
+      const next = prev.filter(s => s.id !== id);
+      return [...next, { id, label: STEP_LABELS[id], status, detail }];
+    });
   }
 
-  function handleDevBypass(role: "admin" | "service_provider" | "customer" | "capital_partner") {
-    try { localStorage.setItem(DEV_BYPASS_KEY, role); } catch { /* private browsing */ }
-    const dest: Record<string, string> = {
-      admin:            "/admin",
-      service_provider: "/provider",
-      customer:         "/customer",
-      capital_partner:  "/capital",
-    };
-    router.push(dest[role]);
+  function devBypass(role: string) {
+    try { localStorage.setItem(DEV_BYPASS_KEY, role); } catch { /* noop */ }
+    router.push({ admin:"/admin", service_provider:"/provider", customer:"/customer", capital_partner:"/capital" }[role] ?? "/");
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (submitting.current) return;
-
-    submitting.current  = true;
-    didRedirect.current = false;
-    t0Ref.current       = performance.now();
+  async function doLogin() {
+    if (busy.current) return;
+    busy.current      = true;
+    redirected.current = false;
 
     setLoading(true);
-    setAuthErrMsg("");
-    setProfileErrMsg("");
-    setProfileRepairWarn("");
-    setDiagLines([]);
-
-    // ── Guard: check env vars ──────────────────────────────────────────────────
-    const sbUrl  = process.env.NEXT_PUBLIC_SUPABASE_URL      ?? "";
-    const sbAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
-
-    diag(`NEXT_PUBLIC_SUPABASE_URL: ${sbUrl  ? "YES" : "NOT SET ✗"}`, sbUrl  ? "ok" : "error");
-    diag(`NEXT_PUBLIC_SUPABASE_ANON_KEY: ${sbAnon ? "YES" : "NOT SET ✗"}`, sbAnon ? "ok" : "error");
-
-    if (sbUrl) {
-      try {
-        const domain = new URL(sbUrl).hostname;
-        diag(`Supabase domain: ${domain}`, "info");
-      } catch { /* malformed URL */ }
-    }
-
-    if (!sbUrl || !sbAnon) {
-      const missing = [
-        !sbUrl  ? "NEXT_PUBLIC_SUPABASE_URL"      : "",
-        !sbAnon ? "NEXT_PUBLIC_SUPABASE_ANON_KEY" : "",
-      ].filter(Boolean).join(", ");
-      setAuthErrMsg(`Missing environment variables: ${missing}. Add them to .env.local and restart.`);
-      submitting.current = false;
-      setLoading(false);
-      return;
-    }
+    setPhase("idle");
+    setSteps([]);
+    setAuthMsg("");
+    setProfMsg("");
 
     try {
-      // ── Step 1 — signInWithPassword (120 s outer timeout, 25 s per-fetch abort) ─
-      diag("auth request started → supabase.auth.signInWithPassword");
-      const tAuth = performance.now();
 
-      let authData: SignInResult["data"] = { user: null, session: null };
-      let signInErr: AuthError | null = null;
+      // ── STEP 1: AUTH ────────────────────────────────────────────────────────
+      setPhase("auth");
+      setStep("auth_started", "running");
+
+      let uid   = "";
+      let email_ = "";
 
       try {
-        const result = await withSignInTimeout(
-          supabase.auth.signInWithPassword({ email, password }) as Promise<SignInResult>,
-          SIGNIN_TIMEOUT_MS,
-        );
-        authData  = result.data;
-        signInErr = result.error;
-      } catch (fetchErr) {
-        // AbortController fired or network-level throw — treat as timeout
-        const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
-        signInErr = { message: msg.includes("abort") || msg.includes("Abort")
-          ? "Connection to Supabase timed out. Please try again."
-          : `Network error: ${msg}` };
-      }
-
-      const authMs = Math.round(performance.now() - tAuth);
-      diag(`auth request completed — ${authMs} ms`, "info");
-
-      if (signInErr || !authData?.user) {
-        const raw     = signInErr?.message ?? "Sign-in failed — no user returned.";
-        const code    = signInErr?.code    ?? null;
-        const isTimeout = raw === SIGNIN_TIMEOUT_MSG;
-        diag(
-          `auth ✗ — ${isTimeout ? "timeout" : code ? `code=${code}` : "no user"} — ${raw}`,
-          isTimeout ? "warn" : "error",
-        );
-        setAuthErrMsg(getAuthErrorMessage(raw, code));
-        return;
-      }
-
-      const user = authData.user;
-      diag(`auth ✓ — uid=${user.id} email=${user.email ?? "(none)"}`, "ok");
-
-      // ── Step 2 — Profile fetch (15 s timeout) ─────────────────────────────────
-      diag("profile fetch started → profiles table");
-      const tProfile = performance.now();
-
-      const profileQuery: Promise<ProfileResult> = (async () => {
-        const r = await supabase
-          .from("profiles")
-          .select("role")
-          .eq("id", user.id)
-          .maybeSingle();
-        return r as ProfileResult;
-      })();
-
-      const { data: profileData, error: profileErr } =
-        await withProfileTimeout(profileQuery, PROFILE_TIMEOUT_MS);
-
-      const profileMs    = Math.round(performance.now() - tProfile);
-      const isAdminEmail = (user.email ?? "") === ADMIN_EMAIL;
-
-      diag(`profile fetch completed — ${profileMs} ms`, "info");
-
-      // ── Step 3 — Resolve profile outcome ──────────────────────────────────────
-
-      if (profileErr) {
-        const isTimeout = profileErr.message === PROFILE_TIMEOUT_MSG;
-        const detail    = formatAuthError(profileErr);
-        diag(
-          `profile ✗ — ${isTimeout ? "timeout" : profileErr.code ? `code=${profileErr.code}` : ""} — ${profileErr.message}`,
-          isTimeout ? "warn" : "error",
+        type AuthRes = { data: { user: { id: string; email?: string | null } | null; session: unknown }; error: { message: string; code?: string | null } | null };
+        const result = await timedPromise(
+          supabase.auth.signInWithPassword({ email, password }) as Promise<AuthRes>,
+          AUTH_TIMEOUT_MS,
+          "Auth request",
         );
 
-        // Admin email fallback — LOCAL DEV ONLY
-        if (isAdminEmail && IS_LOCAL_DEV) {
-          setProfileRepairWarn(
-            `Profile query failed (${profileErr.message}). ` +
-            "Proceeding as admin by email match (local dev only). Insert a profiles row to clear this.",
+        if (result.error || !result.data?.user) {
+          const msg = result.error?.message ?? "No user returned";
+          setStep("auth_started", "error");
+          setStep("auth_failed", "error", msg);
+          setPhase("auth_err");
+          const isCreds   = /invalid login credentials|invalid email or password/i.test(msg);
+          const isTimeout = /timeout|abort/i.test(msg);
+          setAuthMsg(
+            isCreds   ? "Invalid email or password." :
+            isTimeout ? "Unable to reach authentication server. Please retry or contact admin." :
+                        `Authentication error: ${msg}`,
           );
-          diag("profile — admin email match (local dev) → proceeding to /admin with repair warning", "warn");
-          didRedirect.current = true;
-          diag("redirect started → /admin", "ok");
-          router.push("/admin");
           return;
         }
 
-        const isRLS = /row.level security|rls|permission denied|policy/i.test(profileErr.message);
-        setProfileErrMsg(
-          isRLS
-            ? `Profile access denied (RLS policy blocked the query).\n\n${detail}\n\nContact Nexum Admin.`
-            : `Profile query failed — please try again or contact Nexum Admin.\n\n${detail}`,
+        uid    = result.data.user.id;
+        email_ = result.data.user.email ?? "";
+        setStep("auth_started", "ok");
+        setStep("auth_success", "ok", `uid=${uid}`);
+
+      } catch (e) {
+        const msg      = e instanceof Error ? e.message : String(e);
+        const isTimeout = /timeout|abort/i.test(msg);
+        setStep("auth_started", "error");
+        setStep("auth_failed", "error", msg);
+        setPhase("auth_err");
+        setAuthMsg(isTimeout
+          ? "Unable to reach authentication server. Please retry or contact admin."
+          : `Authentication error: ${msg}`
         );
         return;
       }
 
-      if (!profileData) {
-        diag(`profile ✗ — no row found for uid=${user.id}`, "warn");
+      // ── STEP 2: PROFILE (separate from auth — never call auth failure here) ─
+      setPhase("profile");
+      setStep("profile_fetch_started", "running", "Fetching role from profiles table...");
 
-        // Admin email fallback — LOCAL DEV ONLY
-        if (isAdminEmail && IS_LOCAL_DEV) {
-          setProfileRepairWarn(
-            "No profile row found for this account. " +
-            "Proceeding as admin by email match (local dev only). " +
-            "Insert a profiles row for user ID " + user.id + " to clear this.",
+      let role = "";
+
+      try {
+        type ProfRes = { data: { role: string } | null; error: { message: string } | null };
+        const pr = await timedPromise(
+          supabase.from("profiles").select("role").eq("id", uid).maybeSingle() as Promise<ProfRes>,
+          PROFILE_TIMEOUT_MS,
+          "Profile fetch",
+        );
+
+        if (pr.error) throw new Error(pr.error.message);
+
+        if (!pr.data) {
+          // Auth OK but profile row missing or blocked by RLS
+          setStep("profile_fetch_failed", "error", "No profile row found");
+          setPhase("profile_err");
+          setProfMsg(
+            `Login succeeded but admin profile is missing or inactive.\n\n` +
+            `User: ${email_}\nUID:  ${uid}\n\n` +
+            `Run this SQL in Supabase to repair:\n\n` +
+            `INSERT INTO public.profiles (id, role)\n` +
+            `VALUES ('${uid}', 'admin')\n` +
+            `ON CONFLICT (id) DO UPDATE SET role = 'admin';\n\n` +
+            `Also verify the RLS SELECT policy on profiles allows:\n` +
+            `  USING (auth.uid() = id)`
           );
-          diag("profile — admin email match (local dev) → proceeding to /admin with repair warning", "warn");
-          didRedirect.current = true;
-          diag("redirect started → /admin", "ok");
-          router.push("/admin");
           return;
         }
 
-        diag("profile — no row, not admin email → showing error", "error");
-        setProfileErrMsg(
-          "Login succeeded but profile loading failed — no profile record exists for this account. " +
-          "Contact Nexum Admin to configure your account.\n\n" +
-          "User ID: " + user.id,
+        role = pr.data.role as string;
+        setStep("profile_fetch_started", "ok");
+        setStep("profile_fetch_success", "ok", `role=${role}`);
+
+      } catch (e) {
+        const msg      = e instanceof Error ? e.message : String(e);
+        const isTimeout = /timeout/i.test(msg);
+        setStep("profile_fetch_failed", "error", msg);
+        setPhase("profile_err");
+        setProfMsg(
+          isTimeout
+            ? "Profile fetch timed out. Database may be under load. Please retry."
+            : `Could not load profile: ${msg}.\n\nNote: This is NOT an authentication failure. Your credentials are correct.`
         );
         return;
       }
 
-      diag(`profile ✓ — role=${profileData.role}`, "ok");
-
-      // ── Step 4 — Redirect ──────────────────────────────────────────────────────
-      const dest = ROLE_REDIRECT[profileData.role as Profile["role"]];
-
+      // ── STEP 3: REDIRECT ─────────────────────────────────────────────────────
+      const dest = ROLE_REDIRECT[role as Profile["role"]];
       if (!dest) {
-        diag(`profile — unknown role "${profileData.role}"`, "error");
-        setProfileErrMsg(
-          `Login succeeded but profile loading failed — unknown role "${profileData.role}". Contact Nexum Admin.`,
-        );
+        setStep("profile_fetch_failed", "error", `Unknown role: ${role}`);
+        setPhase("profile_err");
+        setProfMsg(`Unknown role "${role}". Contact Nexum admin.`);
         return;
       }
 
-      const totalMs = Math.round(performance.now() - t0Ref.current);
-      diag(`redirect started → ${dest}  |  total ${totalMs} ms`, "ok");
-      didRedirect.current = true;
+      setPhase("done");
+      setStep("redirect_started", "running", dest);
+      redirected.current = true;
       router.push(dest);
-      diag("redirect completed", "ok");
+      setStep("redirect_done", "ok");
 
     } finally {
-      submitting.current = false;
-      if (!didRedirect.current) setLoading(false);
+      busy.current = false;
+      if (!redirected.current) setLoading(false);
     }
   }
 
-  const hasAuthError    = Boolean(authErrMsg);
-  const hasProfileError = Boolean(profileErrMsg);
-  const hasRepairWarn   = Boolean(profileRepairWarn);
-  const hasAnyError     = hasAuthError || hasProfileError;
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    void doLogin();
+  }
+
+  const btnLabel =
+    phase === "auth"    ? "Authenticating..." :
+    phase === "profile" ? "Loading profile..." :
+    phase === "done"    ? "Redirecting..." :
+                          "Sign in";
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans flex flex-col">
@@ -480,143 +355,78 @@ export default function LoginPage() {
 
       <main className="flex flex-1 items-center justify-center px-6 py-20">
         <div className="w-full max-w-sm">
+
           <div className="mb-8 text-center">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-blue-400">
-              Secure Access
-            </p>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-blue-400">Secure Access</p>
             <h1 className="text-3xl font-bold text-slate-50">Sign in</h1>
             <p className="mt-2 text-sm text-slate-400">Enter your credentials to continue</p>
           </div>
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
 
-            {/* ── Auth error ─────────────────────────────────────────────────── */}
-            {hasAuthError && (
+            {/* Auth error */}
+            {phase === "auth_err" && (
               <div className="rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3">
                 <p className="text-xs font-semibold text-red-300">Authentication failed</p>
-                <p className="mt-0.5 text-sm text-red-400">{authErrMsg}</p>
+                <p className="mt-0.5 text-sm text-red-400">{authMsg}</p>
+                <p className="mt-2 text-xs text-slate-500">
+                  If you continue to see this, contact:{" "}
+                  <a href="mailto:admin@nexumsecure.com" className="text-blue-400 hover:underline">admin@nexumsecure.com</a>
+                </p>
               </div>
             )}
 
-            {/* ── Profile error — auth succeeded but profile load failed ──────── */}
-            {hasProfileError && (
+            {/* Profile error — clearly separate from auth failure */}
+            {phase === "profile_err" && (
               <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3">
-                <p className="text-xs font-semibold text-amber-300">Login succeeded but profile loading failed</p>
-                <p className="mt-0.5 whitespace-pre-wrap font-mono text-xs text-amber-400">
-                  {profileErrMsg}
+                <p className="text-xs font-semibold text-amber-300">Login succeeded — profile setup required</p>
+                <pre className="mt-1 whitespace-pre-wrap font-mono text-xs text-amber-400 leading-relaxed">{profMsg}</pre>
+                <p className="mt-2 text-xs text-slate-500">
+                  Contact admin:{" "}
+                  <a href="mailto:admin@nexumsecure.com" className="text-blue-400 hover:underline">admin@nexumsecure.com</a>
                 </p>
               </div>
             )}
 
-            {/* ── Profile repair warning (admin email fallback path) ──────────── */}
-            {hasRepairWarn && (
-              <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/5 px-4 py-3">
-                <p className="text-xs font-semibold text-yellow-300">Profile repair needed</p>
-                <p className="mt-0.5 whitespace-pre-wrap font-mono text-xs text-yellow-400">
-                  {profileRepairWarn}
-                </p>
-              </div>
-            )}
-
-            {/* ── Email ─────────────────────────────────────────────────────── */}
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-slate-400">
-                Email address
-              </label>
-              <input
-                type="email"
-                required
-                autoComplete="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@company.com"
-                disabled={loading}
-                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:border-blue-500/60 focus:outline-none focus:ring-1 focus:ring-blue-500/30 transition-colors disabled:opacity-50"
-              />
+              <label className="mb-1.5 block text-xs font-medium text-slate-400">Email address</label>
+              <input type="email" required autoComplete="email"
+                value={email} onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@company.com" disabled={loading}
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:border-blue-500/60 focus:outline-none focus:ring-1 focus:ring-blue-500/30 transition-colors disabled:opacity-50" />
             </div>
 
-            {/* ── Password ──────────────────────────────────────────────────── */}
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-slate-400">
-                Password
-              </label>
-              <input
-                type="password"
-                required
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                disabled={loading}
-                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:border-blue-500/60 focus:outline-none focus:ring-1 focus:ring-blue-500/30 transition-colors disabled:opacity-50"
-              />
+              <label className="mb-1.5 block text-xs font-medium text-slate-400">Password</label>
+              <input type="password" required autoComplete="current-password"
+                value={password} onChange={(e) => setPassword(e.target.value)}
+                placeholder="password" disabled={loading}
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:border-blue-500/60 focus:outline-none focus:ring-1 focus:ring-blue-500/30 transition-colors disabled:opacity-50" />
             </div>
 
-            {/* ── Submit ────────────────────────────────────────────────────── */}
-            <button
-              type="submit"
-              disabled={loading}
-              className="mt-2 w-full rounded-lg border border-blue-500/40 bg-blue-500/15 py-2.5 text-sm font-semibold text-blue-300 hover:bg-blue-500/25 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
+            <button type="submit" disabled={loading}
+              className="mt-2 w-full rounded-lg border border-blue-500/40 bg-blue-500/15 py-2.5 text-sm font-semibold text-blue-300 hover:bg-blue-500/25 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
                   <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-blue-400 border-t-transparent" />
-                  Signing in…
+                  {btnLabel}
                 </span>
-              ) : (
-                "Sign in"
-              )}
+              ) : "Sign in"}
             </button>
+
+            {(phase === "auth_err" || phase === "profile_err") && !loading && (
+              <button type="button" onClick={doLogin}
+                className="w-full rounded-lg border border-slate-700/40 bg-slate-900/50 py-2.5 text-sm font-semibold text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 active:scale-[0.98] transition-all">
+                Retry
+              </button>
+            )}
+
           </form>
 
-          {/* ── Local dev bypass (NEVER shown in staging/production) ────── */}
-          {IS_LOCAL_DEV && (
-            <div className="mt-5">
-              <div className="relative flex items-center py-1">
-                <div className="flex-grow border-t border-slate-800" />
-                <span className="mx-3 flex-shrink text-[10px] text-slate-600">local dev bypass</span>
-                <div className="flex-grow border-t border-slate-800" />
-              </div>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <button type="button" onClick={() => handleDevBypass("admin")}
-                  className="rounded-lg border border-amber-500/40 bg-amber-500/10 py-2 text-xs font-semibold text-amber-400 hover:bg-amber-500/20 active:scale-[0.98] transition-all">
-                  Admin
-                </button>
-                <button type="button" onClick={() => handleDevBypass("service_provider")}
-                  className="rounded-lg border border-blue-500/40 bg-blue-500/10 py-2 text-xs font-semibold text-blue-400 hover:bg-blue-500/20 active:scale-[0.98] transition-all">
-                  Provider
-                </button>
-                <button type="button" onClick={() => handleDevBypass("customer")}
-                  className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 py-2 text-xs font-semibold text-emerald-400 hover:bg-emerald-500/20 active:scale-[0.98] transition-all">
-                  Customer
-                </button>
-                <button type="button" onClick={() => handleDevBypass("capital_partner")}
-                  className="rounded-lg border border-purple-500/40 bg-purple-500/10 py-2 text-xs font-semibold text-purple-400 hover:bg-purple-500/20 active:scale-[0.98] transition-all">
-                  Capital Partner
-                </button>
-              </div>
-              <p className="mt-1.5 text-center text-[10px] text-slate-600">
-                Bypasses Supabase — local dev only, never shown in production
-              </p>
-              <TestConnectionButton />
-            </div>
-          )}
+          <StepTracker steps={steps} />
+          <ConnDiagPanel />
+          <DevBypassPanel onBypass={devBypass} />
 
-          {/* ── Role redirect hint ────────────────────────────────────────────── */}
-          {!hasAnyError && (
-            <div className="mt-5 rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 text-xs text-slate-500 space-y-1">
-              <p className="font-semibold text-slate-400">Role redirect after login</p>
-              <p>admin → /admin</p>
-              <p>service_provider → /provider</p>
-              <p>customer → /customer · capital_partner → /capital</p>
-            </div>
-          )}
-
-          {/* ── Diagnostics (shown after any login attempt) ───────────────────── */}
-          <DiagPanel lines={diagLines} />
-
-          {/* ── Supabase env panel (local dev only) ──────────────────────────── */}
-          <SupabaseEnvPanel />
         </div>
       </main>
     </div>

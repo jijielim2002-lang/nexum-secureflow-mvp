@@ -421,7 +421,7 @@ export default function LoginPage() {
       if (!validRoles.includes(role)) {
         setPhase("profile_err");
         setProfKind("error");
-        setProfMsg("Unknown role "" + role + "". Contact Nexum admin.");
+        setProfMsg(`Unknown role "${role}". Contact Nexum admin.`);
         return;
       }
 

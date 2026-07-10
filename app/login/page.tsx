@@ -10,13 +10,13 @@ import { DEV_BYPASS_KEY } from "@/contexts/AuthContext";
 // 45 s for auth — Supabase GoTrue cold-start can legitimately take 30–40 s.
 // Timeout is always cleared after the auth promise resolves so it doesn't linger.
 
-const SIGNIN_TIMEOUT_MS  = 120_000;
-const PROFILE_TIMEOUT_MS = 30_000;
+const SIGNIN_TIMEOUT_MS  = 30_000;   // outer race; per-fetch AbortController is 25 s
+const PROFILE_TIMEOUT_MS = 15_000;
 
 const SIGNIN_TIMEOUT_MSG =
-  "Sign-in timed out after 2 minutes. Supabase Auth did not respond in time.";
+  "Sign-in timed out. Supabase Auth did not respond in time. Please try again.";
 const PROFILE_TIMEOUT_MSG =
-  "Profile fetch timed out after 30 seconds.";
+  "Profile fetch timed out. Please try again.";
 
 // ─── Admin email fallback (LOCAL DEV ONLY — gated by IS_LOCAL_DEV below) ─────
 // Never applies in staging or production.
@@ -318,14 +318,27 @@ export default function LoginPage() {
     }
 
     try {
-      // ── Step 1 — signInWithPassword (45 s timeout) ────────────────────────────
+      // ── Step 1 — signInWithPassword (120 s outer timeout, 25 s per-fetch abort) ─
       diag("auth request started → supabase.auth.signInWithPassword");
       const tAuth = performance.now();
 
-      const { data: authData, error: signInErr } = await withSignInTimeout(
-        supabase.auth.signInWithPassword({ email, password }) as Promise<SignInResult>,
-        SIGNIN_TIMEOUT_MS,
-      );
+      let authData: SignInResult["data"] = { user: null, session: null };
+      let signInErr: AuthError | null = null;
+
+      try {
+        const result = await withSignInTimeout(
+          supabase.auth.signInWithPassword({ email, password }) as Promise<SignInResult>,
+          SIGNIN_TIMEOUT_MS,
+        );
+        authData  = result.data;
+        signInErr = result.error;
+      } catch (fetchErr) {
+        // AbortController fired or network-level throw — treat as timeout
+        const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+        signInErr = { message: msg.includes("abort") || msg.includes("Abort")
+          ? "Connection to Supabase timed out. Please try again."
+          : `Network error: ${msg}` };
+      }
 
       const authMs = Math.round(performance.now() - tAuth);
       diag(`auth request completed — ${authMs} ms`, "info");

@@ -16,6 +16,23 @@ if (typeof window !== "undefined" && (!supabaseUrl || !supabaseKey)) {
 export const supabase = createClient(
   supabaseUrl  || "https://placeholder.supabase.co",
   supabaseKey  || "placeholder-anon-key",
+  {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+    },
+    realtime: {
+      params: { eventsPerSecond: -1 },
+    },
+    global: {
+      fetch: (url, options = {}) => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 25_000);
+        return fetch(url, { ...options, signal: controller.signal })
+          .finally(() => clearTimeout(timer));
+      },
+    },
+  },
 );
 
 // ─── Row shapes (mirrors the DB schema) ──────────────────────────────────────

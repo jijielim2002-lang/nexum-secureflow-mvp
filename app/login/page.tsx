@@ -239,19 +239,27 @@ export default function LoginPage() {
       let sessionToken = "";
 
       try {
-        type AuthRes = {
-          data: { user: { id: string; email?: string | null } | null; session: { access_token: string } | null };
-          error: { message: string } | null;
+        // Sign in via server-side proxy (/api/auth/signin) so the Supabase
+        // request is made by Vercel (fast server path) instead of the browser,
+        // bypassing ISP latency or network blocks that cause browser timeouts.
+        type SigninRes = {
+          session?: { access_token: string; refresh_token: string; expires_in: number; token_type: string };
+          user?:    { id: string; email: string };
+          error?:   string;
         };
 
         const result = await timedPromise(
-          supabase.auth.signInWithPassword({ email: emailVal, password }) as Promise<AuthRes>,
+          fetch("/api/auth/signin", {
+            method:  "POST",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify({ email: emailVal, password }),
+          }).then(r => r.json() as Promise<SigninRes>),
           AUTH_TIMEOUT_MS,
           "Auth request",
         );
 
-        if (result.error || !result.data?.user) {
-          const msg = result.error?.message ?? "No user returned";
+        if (result.error || !result.user || !result.session) {
+          const msg = result.error ?? "No user returned";
           upsertStep("auth_started", "error");
           upsertStep("auth_failed",  "error", msg);
           setPhase("auth_err");
@@ -265,8 +273,15 @@ export default function LoginPage() {
           return;
         }
 
-        uid          = result.data.user.id;
-        sessionToken = result.data.session?.access_token ?? "";
+        // Establish browser session so AuthContext / supabase client are authenticated
+        const { error: setErr } = await supabase.auth.setSession({
+          access_token:  result.session.access_token,
+          refresh_token: result.session.refresh_token,
+        });
+        if (setErr) throw new Error("Session setup failed: " + setErr.message);
+
+        uid          = result.user.id;
+        sessionToken = result.session.access_token;
         upsertStep("auth_started", "ok");
         upsertStep("auth_success", "ok", "auth success: YES · uid=" + uid);
 

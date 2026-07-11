@@ -260,6 +260,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           email: session?.user?.email ?? null,
         });
 
+        // When we do a server-side login (via /api/auth/signin) and store the session
+        // in localStorage, Supabase's _recoverAndRefresh fires SIGNED_IN but doesn't
+        // call _saveSession. The subsequent emitInitialSession then fires INITIAL_SESSION
+        // with null (because this.currentSession was never set). If we already processed
+        // a SIGNED_IN event, ignore this null INITIAL_SESSION — it must not clear the
+        // user and undo the successful login.
+        if (event === "INITIAL_SESSION" && session === null) {
+          // Unblock loading so the page can show, but don't touch user/profile state.
+          // If user is genuinely not logged in (initial state is null), this is a no-op.
+          clearTimeout(safetyTimer);
+          if (mounted.current) setLoading(false);
+          return;
+        }
+
         const u = session?.user ?? null;
         setUser(u);
 

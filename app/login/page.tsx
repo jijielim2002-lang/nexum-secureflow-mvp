@@ -279,9 +279,8 @@ export default function LoginPage() {
         // Instead we write the session in Supabase JS v2's expected format and do a
         // full-page redirect, causing the Supabase client to reinitialise from storage.
         try {
-          const projectRef = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "")
-            .replace(/^https?:\/\//, "").split(".")[0];
-          const storageKey = `sb-${projectRef}-auth-token`;
+          // Key confirmed from @supabase/auth-js source: STORAGE_KEY = 'supabase.auth.token'
+          const storageKey = "supabase.auth.token";
           localStorage.setItem(storageKey, JSON.stringify({
             access_token:  result.session.access_token,
             refresh_token: result.session.refresh_token,

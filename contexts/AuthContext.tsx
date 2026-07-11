@@ -93,9 +93,23 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 // Called when browser-side query times out or returns no row.
 // Uses /api/auth/profile which runs with the service-role key (bypasses RLS).
 
-async function fetchProfileViaAPI(userId: string): Promise<MinRow | null> {
-  const { data: { session } } = await supabase.auth.getSession();
-  const token = session?.access_token;
+async function fetchProfileViaAPI(userId: string, knownToken?: string): Promise<MinRow | null> {
+  // Prefer the token passed from the onAuthStateChange callback (avoids calling
+  // getSession() which blocks on the Supabase lock held by _recoverAndRefresh
+  // and returns null because _saveSession was never called).
+  let token = knownToken;
+
+  // Secondary: read directly from localStorage (same key Supabase uses).
+  if (!token) {
+    try {
+      const stored = localStorage.getItem("supabase.auth.token");
+      if (stored) {
+        const parsed = JSON.parse(stored) as { access_token?: string };
+        token = parsed?.access_token;
+      }
+    } catch { /* ignore */ }
+  }
+
   if (!token) throw new Error("No active session for API fallback");
 
   const res  = await fetch("/api/auth/profile", {
@@ -124,7 +138,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isBypass,       setIsBypass]       = useState(false);
   const mounted = useRef(true);
 
-  async function fetchProfile(userId: string, userEmail?: string | null) {
+  async function fetchProfile(userId: string, userEmail?: string | null, knownToken?: string) {
     console.log("[AuthContext] fetchProfile uid=" + userId);
 
     const VALID_ROLES = ["admin", "service_provider", "customer", "capital_partner"];
@@ -156,7 +170,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.log("[AuthContext] trying /api/auth/profile fallback...");
 
         try {
-          minRow = await fetchProfileViaAPI(userId);
+          minRow = await fetchProfileViaAPI(userId, knownToken);
           via    = "api";
           console.log("[AuthContext] API fallback result:", minRow ? "found" : "null");
         } catch (apiErr) {
@@ -178,7 +192,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!minRow && via === "browser") {
         console.warn("[AuthContext] browser returned no row — checking via API");
         try {
-          const apiRow = await fetchProfileViaAPI(userId);
+          const apiRow = await fetchProfileViaAPI(userId, knownToken);
           if (apiRow) { minRow = apiRow; via = "api"; }
         } catch { /* ignore; fall through to "no profile row" */ }
       }
@@ -278,7 +292,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(u);
 
         if (u) {
-          await fetchProfile(u.id, u.email);
+          await fetchProfile(u.id, u.email, session?.access_token ?? undefined);
         } else {
           setProfile(null);
           setProfileError(null);

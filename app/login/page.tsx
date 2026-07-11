@@ -273,12 +273,24 @@ export default function LoginPage() {
           return;
         }
 
-        // Establish browser session so AuthContext / supabase client are authenticated
-        const { error: setErr } = await supabase.auth.setSession({
-          access_token:  result.session.access_token,
-          refresh_token: result.session.refresh_token,
-        });
-        if (setErr) throw new Error("Session setup failed: " + setErr.message);
+        // Store session in localStorage so AuthContext picks it up on the next page load.
+        // We skip supabase.auth.setSession() because it makes a browser→Supabase HTTP
+        // call to validate the token — which hangs on this network like signInWithPassword.
+        // Instead we write the session in Supabase JS v2's expected format and do a
+        // full-page redirect, causing the Supabase client to reinitialise from storage.
+        try {
+          const projectRef = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "")
+            .replace(/^https?:\/\//, "").split(".")[0];
+          const storageKey = `sb-${projectRef}-auth-token`;
+          localStorage.setItem(storageKey, JSON.stringify({
+            access_token:  result.session.access_token,
+            refresh_token: result.session.refresh_token,
+            expires_in:    result.session.expires_in  ?? 3600,
+            expires_at:    Math.floor(Date.now() / 1000) + (result.session.expires_in ?? 3600),
+            token_type:    result.session.token_type  ?? "bearer",
+            user: { id: result.user.id, email: result.user.email },
+          }));
+        } catch { /* localStorage unavailable — session will be re-fetched on next load */ }
 
         uid          = result.user.id;
         sessionToken = result.session.access_token;
@@ -444,7 +456,9 @@ export default function LoginPage() {
       setPhase("done");
       upsertStep("redirect_started", "running", dest);
       redirected.current = true;
-      router.push(dest);
+      // Full-page redirect so the Supabase client reinitialises from localStorage
+      // and AuthContext picks up the session we stored above.
+      window.location.href = dest;
       upsertStep("redirect_done", "ok");
 
     } finally {

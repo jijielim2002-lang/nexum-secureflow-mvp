@@ -136,7 +136,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profileError,   setProfileError]   = useState<string | null>(null);
   const [profileWarning, setProfileWarning] = useState<string | null>(null);
   const [isBypass,       setIsBypass]       = useState(false);
-  const mounted = useRef(true);
+  const mounted            = useRef(true);
+  // True once a SIGNED_IN event has been processed by our callback.
+  // Used to detect the race where initialize() fires SIGNED_IN before
+  // onAuthStateChange registers our callback.
+  const sessionBootstrapped = useRef(false);
 
   async function fetchProfile(userId: string, userEmail?: string | null, knownToken?: string) {
     console.log("[AuthContext] fetchProfile uid=" + userId);
@@ -274,15 +278,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           email: session?.user?.email ?? null,
         });
 
-        // When we do a server-side login (via /api/auth/signin) and store the session
-        // in localStorage, Supabase's _recoverAndRefresh fires SIGNED_IN but doesn't
-        // call _saveSession. The subsequent emitInitialSession then fires INITIAL_SESSION
-        // with null (because this.currentSession was never set). If we already processed
-        // a SIGNED_IN event, ignore this null INITIAL_SESSION — it must not clear the
-        // user and undo the successful login.
+        // INITIAL_SESSION with null can arrive in two situations:
+        //
+        // 1. Genuine "not logged in" — no session in storage.
+        //
+        // 2. Race condition: Supabase's initialize() fires _recoverAndRefresh (and
+        //    therefore SIGNED_IN) during module load, before React's useEffect has
+        //    had a chance to register this callback. The SIGNED_IN event goes to an
+        //    empty stateChangeEmitters set and is lost. The subsequent INITIAL_SESSION
+        //    then fires with null (because _recoverAndRefresh never calls _saveSession,
+        //    so this.currentSession stays null). Result: user is never set → AuthGuard
+        //    redirects to /login.
+        //
+        // To detect case 2, we check sessionBootstrapped (set when SIGNED_IN is
+        // handled by this callback). If it's still false when INITIAL_SESSION/null
+        // arrives, we bootstrap the user directly from localStorage.
         if (event === "INITIAL_SESSION" && session === null) {
-          // Unblock loading so the page can show, but don't touch user/profile state.
-          // If user is genuinely not logged in (initial state is null), this is a no-op.
+          if (!sessionBootstrapped.current) {
+            // May have missed the SIGNED_IN event — check localStorage directly.
+            try {
+              const stored = localStorage.getItem("supabase.auth.token");
+              if (stored) {
+                const parsed = JSON.parse(stored) as {
+                  access_token?: string;
+                  expires_at?:   number;
+                  user?:         { id: string; email?: string };
+                };
+                const now = Math.floor(Date.now() / 1000);
+                // Only use the stored session if it's not expired (with 30s margin).
+                if (
+                  parsed?.access_token &&
+                  parsed?.user?.id &&
+                  (!parsed.expires_at || parsed.expires_at > now + 30)
+                ) {
+                  console.log("[AuthContext] INITIAL_SESSION null — bootstrapping user from localStorage (missed SIGNED_IN race)");
+                  const u = { id: parsed.user.id, email: parsed.user.email ?? "" } as unknown as User;
+                  setUser(u);
+                  await fetchProfile(u.id, parsed.user.email ?? null, parsed.access_token);
+                  clearTimeout(safetyTimer);
+                  if (mounted.current) setLoading(false);
+                  return;
+                }
+              }
+            } catch { /* localStorage unavailable or corrupt — treat as logged out */ }
+          }
+          // Either sessionBootstrapped is true (SIGNED_IN already handled),
+          // or no valid stored session found → genuine logged-out state.
           clearTimeout(safetyTimer);
           if (mounted.current) setLoading(false);
           return;
@@ -292,6 +333,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(u);
 
         if (u) {
+          sessionBootstrapped.current = true;
           await fetchProfile(u.id, u.email, session?.access_token ?? undefined);
         } else {
           setProfile(null);

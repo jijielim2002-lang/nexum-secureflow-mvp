@@ -14,7 +14,7 @@ const IS_LOCAL_DEV =
 
 // Browser-side profile fetch timeout (production: 8s per requirements).
 // If this expires, the page tries /api/auth/profile as a server-side fallback.
-const AUTH_TIMEOUT_MS    = IS_LOCAL_DEV ? 30_000 : 20_000;
+const AUTH_TIMEOUT_MS    = IS_LOCAL_DEV ? 30_000 : 45_000;
 const PROFILE_TIMEOUT_MS = IS_LOCAL_DEV ? 15_000 :  8_000;
 // Server fallback also gets 8 s.
 const API_FALLBACK_MS    = 8_000;

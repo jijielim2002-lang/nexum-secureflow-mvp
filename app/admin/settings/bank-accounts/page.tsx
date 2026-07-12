@@ -2,8 +2,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { AdminNav } from "@/components/AdminNav";
 import { AuthGuard } from "@/components/AuthGuard";
-import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/lib/supabaseClient";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -37,7 +35,6 @@ const EMPTY_FORM = {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 function BankAccountsContent() {
-  const { session } = useAuth();
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -47,17 +44,25 @@ function BankAccountsContent() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
 
-  const authHeader = useCallback(async () => {
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token ?? session?.access_token ?? "";
+  // Read token from localStorage directly — avoids supabase.auth.getSession()
+  // which makes a browser→Supabase HTTP call that hangs on this network.
+  const authHeader = useCallback(() => {
+    let token = "";
+    try {
+      const stored = localStorage.getItem("supabase.auth.token");
+      if (stored) {
+        const parsed = JSON.parse(stored) as { access_token?: string };
+        token = parsed?.access_token ?? "";
+      }
+    } catch { /* ignore */ }
     return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-  }, [session]);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const headers = await authHeader();
+      const headers = authHeader();
       const res = await fetch("/api/admin/bank-accounts", { headers });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error ?? "Failed to load");
@@ -100,7 +105,7 @@ function BankAccountsContent() {
     }
     setSaving(true);
     try {
-      const headers = await authHeader();
+      const headers = authHeader();
       const payload = {
         ...form,
         swift_code: form.swift_code || null,
@@ -127,7 +132,7 @@ function BankAccountsContent() {
     if (!confirm("Delete this bank account? This cannot be undone.")) return;
     setDeleting(id);
     try {
-      const headers = await authHeader();
+      const headers = authHeader();
       const res = await fetch(`/api/admin/bank-accounts?id=${id}`, { method: "DELETE", headers });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error ?? "Delete failed");
@@ -140,7 +145,7 @@ function BankAccountsContent() {
   }
 
   async function toggleStatus(acc: BankAccount) {
-    const headers = await authHeader();
+    const headers = authHeader();
     await fetch(`/api/admin/bank-accounts?id=${acc.id}`, {
       method: "PATCH",
       headers,
@@ -372,7 +377,7 @@ function BankAccountsContent() {
 
 export default function BankAccountsPage() {
   return (
-    <AuthGuard allowedRoles={["admin"]}>
+    <AuthGuard requiredRole="admin">
       <BankAccountsContent />
     </AuthGuard>
   );

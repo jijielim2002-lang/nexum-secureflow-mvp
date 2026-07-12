@@ -68,31 +68,31 @@ interface FieldValues {
 
 const TRANSPORTER_DOCS = [
   { docType: "Transport Invoice", required: true },
-  { docType: "Delivery Order", required: false },
-  { docType: "POD", required: false },
-  { docType: "Commercial Invoice", required: false },
-  { docType: "Packing List", required: false },
+  { docType: "Delivery Order", required: true },
+  { docType: "POD", required: true },
+  { docType: "Commercial Invoice", required: true },
+  { docType: "Packing List", required: true },
 ];
 
 const CUSTOMS_BROKER_DOCS = [
   { docType: "Service Invoice", required: true },
-  { docType: "Kastam Form", required: false },
-  { docType: "Commercial Invoice", required: false },
-  { docType: "Packing List", required: false },
+  { docType: "Kastam Form", required: true },
+  { docType: "Commercial Invoice", required: true },
+  { docType: "Packing List", required: true },
   { docType: "BL/AWB/DO", required: false },
   { docType: "Permit/License", required: false },
 ];
 
 const BOTH_DOCS = [
   { docType: "Transport Invoice", required: true },
+  { docType: "Kastam Form", required: true },
+  { docType: "Delivery Order", required: true },
+  { docType: "POD", required: true },
+  { docType: "Commercial Invoice", required: true },
+  { docType: "Packing List", required: true },
+  { docType: "Permit/License", required: true },
   { docType: "Service Invoice", required: false },
-  { docType: "Kastam Form", required: false },
-  { docType: "Delivery Order", required: false },
-  { docType: "POD", required: false },
-  { docType: "Commercial Invoice", required: false },
-  { docType: "Packing List", required: false },
   { docType: "BL/AWB/DO", required: false },
-  { docType: "Permit/License", required: false },
 ];
 
 function getDocSlots(providerType: ProviderType): DocSlot[] {
@@ -219,6 +219,11 @@ function CreateFromDocumentsInner() {
 
   async function handleStep2Continue() {
     setError("");
+    const missingRequired = docSlots.filter((s) => s.required && !s.file).map((s) => s.docType);
+    if (missingRequired.length > 0) {
+      setError("Please upload all required documents: " + missingRequired.join(", "));
+      return;
+    }
     const hasFile = docSlots.some((s) => s.file !== null);
     if (!hasFile) {
       setError("Please select at least one file to upload.");
@@ -497,21 +502,21 @@ function CreateFromDocumentsInner() {
                     icon: "🚛",
                     title: "Transporter",
                     desc: "Transport jobs — road, sea, or air freight",
-                    docs: TRANSPORTER_DOCS.map((d) => d.docType),
+                    docs: TRANSPORTER_DOCS,
                   },
                   {
                     type: "Customs Broker" as ProviderType,
                     icon: "📋",
                     title: "Customs Broker",
                     desc: "Customs clearance jobs",
-                    docs: CUSTOMS_BROKER_DOCS.map((d) => d.docType),
+                    docs: CUSTOMS_BROKER_DOCS,
                   },
                   {
                     type: "Both" as ProviderType,
                     icon: "🔄",
-                    title: "Both",
-                    desc: "Combined transport + clearance",
-                    docs: ["Transport Invoice", "Service Invoice", "Kastam Form", "Commercial Invoice", "...more"],
+                    title: "Both (Cross-border)",
+                    desc: "Transport + customs clearance",
+                    docs: BOTH_DOCS,
                   },
                 ] as const
               ).map(({ type, icon, title, desc, docs }) => (
@@ -528,9 +533,11 @@ function CreateFromDocumentsInner() {
                   <div className="font-semibold text-white mb-1">{title}</div>
                   <div className="text-xs text-slate-400 mb-3">{desc}</div>
                   <div className="space-y-1">
-                    {docs.map((doc) => (
-                      <div key={doc} className="text-xs text-slate-500">
-                        • {doc}
+                    {(docs as typeof TRANSPORTER_DOCS).map((doc) => (
+                      <div key={doc.docType} className={`text-xs flex items-center gap-1 ${doc.required ? "text-slate-300" : "text-slate-500"}`}>
+                        <span>{doc.required ? "★" : "•"}</span>
+                        <span>{doc.docType}</span>
+                        {doc.required && <span className="text-blue-400 text-[10px]">required</span>}
                       </div>
                     ))}
                   </div>

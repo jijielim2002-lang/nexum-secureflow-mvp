@@ -72,7 +72,6 @@ function getDevBypassRole(): string | null {
 type DBRow<T> = { data: T | null; error: { message: string } | null };
 
 // Only columns confirmed to exist in production: id, email, role.
-// Do NOT include company_id, full_name, company_name, status, updated_at.
 type MinRow = { id: string; email: string | null; role: string };
 
 // ─── Timeout wrapper ──────────────────────────────────────────────────────────
@@ -89,17 +88,14 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-// ─── Server-side fallback ─────────────────────────────────────────────────────
-// Called when browser-side query times out or returns no row.
-// Uses /api/auth/profile which runs with the service-role key (bypasses RLS).
+// ─── Server-side profile fetch ────────────────────────────────────────────────
+// Calls /api/auth/profile which runs with the service-role key (bypasses RLS).
+// Uses knownToken directly (avoids getSession() which may block on the lock).
+// Falls back to reading localStorage if no token is passed.
 
 async function fetchProfileViaAPI(userId: string, knownToken?: string): Promise<MinRow | null> {
-  // Prefer the token passed from the onAuthStateChange callback (avoids calling
-  // getSession() which blocks on the Supabase lock held by _recoverAndRefresh
-  // and returns null because _saveSession was never called).
   let token = knownToken;
 
-  // Secondary: read directly from localStorage (same key Supabase uses).
   if (!token) {
     try {
       const stored = localStorage.getItem("supabase.auth.token");
@@ -137,9 +133,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profileWarning, setProfileWarning] = useState<string | null>(null);
   const [isBypass,       setIsBypass]       = useState(false);
   const mounted            = useRef(true);
-  // True once a SIGNED_IN event has been processed by our callback.
-  // Used to detect the race where initialize() fires SIGNED_IN before
-  // onAuthStateChange registers our callback.
+  // Prevents double profile-fetch when both localStorage bootstrap and
+  // Supabase events fire for the same session.
   const sessionBootstrapped = useRef(false);
 
   async function fetchProfile(userId: string, userEmail?: string | null, knownToken?: string) {
@@ -149,9 +144,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     try {
       // ── Phase 1: browser-side fetch (minimum columns only) ───────────────────
-      // Selects only id, email, role — confirmed to exist in production schema.
-      // Does NOT select: company_id, full_name, company_name, status, updated_at.
-      // If this times out or returns null, falls back to /api/auth/profile.
       let minRow: MinRow | null = null;
       let via: "browser" | "api" = "browser";
 
@@ -214,8 +206,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         ? (minRow.role as Profile["role"])
         : "customer";
 
-      // Build profile with safe defaults for fields not in the minimal schema.
-      // This preserves backward compatibility with admin pages that access these fields.
       const built: Profile = {
         id:           userId,
         role,
@@ -245,7 +235,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     mounted.current = true;
+    sessionBootstrapped.current = false;
 
+    // ── Dev bypass ───────────────────────────────────────────────────────────
     const bypassRole = getDevBypassRole();
     if (bypassRole) {
       const bp = BYPASS_PROFILES[bypassRole] ?? BYPASS_PROFILES.admin;
@@ -261,77 +253,102 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return () => { mounted.current = false; };
     }
 
-    // Safety timer: 15s browser + 8s API fallback + buffer = 25s
+    // Safety timer — unblocks UI if everything else hangs
     const safetyTimer = setTimeout(() => {
       if (mounted.current) {
-        console.warn("[AuthContext] safety timeout after 25s — unblocking UI");
+        console.warn("[AuthContext] safety timeout after 30s — unblocking UI");
         setLoading(false);
       }
-    }, 25_000);
+    }, 30_000);
+
+    // ── STEP 1: Immediate localStorage bootstrap ─────────────────────────────
+    // Supabase's initialize() fires SIGNED_IN as microtasks during module load,
+    // BEFORE React's useEffect (a macrotask) runs and registers our
+    // onAuthStateChange callback. The SIGNED_IN event is lost; INITIAL_SESSION
+    // then fires with null (because _recoverAndRefresh never calls _saveSession).
+    //
+    // Solution: read the session from localStorage synchronously at mount.
+    // This is the authoritative source — we wrote it there after /api/auth/signin.
+    // If a valid session exists, set user immediately and start profile fetch.
+    // onAuthStateChange is still set up below to handle SIGNED_OUT / token refresh.
+
+    let foundSession   = false;
+    let bsUserId       = "";
+    let bsUserEmail    = "";
+    let bsToken        = "";
+
+    try {
+      const stored = localStorage.getItem("supabase.auth.token");
+      if (stored) {
+        const parsed = JSON.parse(stored) as {
+          access_token?: string;
+          expires_at?:   number;
+          user?:         { id: string; email?: string };
+        };
+        const now = Math.floor(Date.now() / 1000);
+        if (
+          parsed?.access_token &&
+          parsed?.user?.id &&
+          (!parsed.expires_at || parsed.expires_at > now + 30)
+        ) {
+          foundSession  = true;
+          bsUserId      = parsed.user.id;
+          bsUserEmail   = parsed.user.email ?? "";
+          bsToken       = parsed.access_token;
+        }
+      }
+    } catch { /* localStorage unavailable — fall through to Supabase events */ }
+
+    if (foundSession) {
+      const u = { id: bsUserId, email: bsUserEmail } as unknown as User;
+      setUser(u);
+      sessionBootstrapped.current = true;
+      console.log("[AuthContext] localStorage bootstrap: uid=" + bsUserId);
+
+      // Profile fetch runs async; setLoading(false) called when done (or by safetyTimer).
+      void (async () => {
+        await fetchProfile(bsUserId, bsUserEmail, bsToken);
+        clearTimeout(safetyTimer);
+        if (mounted.current) setLoading(false);
+      })();
+    }
+
+    // ── STEP 2: onAuthStateChange for ongoing auth events ────────────────────
+    // If we already bootstrapped from localStorage: only handle SIGNED_OUT here
+    // (token refresh is handled automatically by Supabase; we don't need to
+    // re-fetch the profile — it's already loaded).
+    // If we did NOT bootstrap (no stored session): handle INITIAL_SESSION / SIGNED_IN
+    // as the primary auth path (normal browser flow where Supabase works).
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (!mounted.current) return;
-
         console.log("[AuthContext] onAuthStateChange: " + event, {
-          uid:   session?.user?.id    ?? null,
-          email: session?.user?.email ?? null,
+          uid:          session?.user?.id    ?? null,
+          email:        session?.user?.email ?? null,
+          bootstrapped: sessionBootstrapped.current,
         });
 
-        // INITIAL_SESSION with null can arrive in two situations:
-        //
-        // 1. Genuine "not logged in" — no session in storage.
-        //
-        // 2. Race condition: Supabase's initialize() fires _recoverAndRefresh (and
-        //    therefore SIGNED_IN) during module load, before React's useEffect has
-        //    had a chance to register this callback. The SIGNED_IN event goes to an
-        //    empty stateChangeEmitters set and is lost. The subsequent INITIAL_SESSION
-        //    then fires with null (because _recoverAndRefresh never calls _saveSession,
-        //    so this.currentSession stays null). Result: user is never set → AuthGuard
-        //    redirects to /login.
-        //
-        // To detect case 2, we check sessionBootstrapped (set when SIGNED_IN is
-        // handled by this callback). If it's still false when INITIAL_SESSION/null
-        // arrives, we bootstrap the user directly from localStorage.
-        if (event === "INITIAL_SESSION" && session === null) {
-          if (!sessionBootstrapped.current) {
-            // May have missed the SIGNED_IN event — check localStorage directly.
-            try {
-              const stored = localStorage.getItem("supabase.auth.token");
-              if (stored) {
-                const parsed = JSON.parse(stored) as {
-                  access_token?: string;
-                  expires_at?:   number;
-                  user?:         { id: string; email?: string };
-                };
-                const now = Math.floor(Date.now() / 1000);
-                // Only use the stored session if it's not expired (with 30s margin).
-                if (
-                  parsed?.access_token &&
-                  parsed?.user?.id &&
-                  (!parsed.expires_at || parsed.expires_at > now + 30)
-                ) {
-                  console.log("[AuthContext] INITIAL_SESSION null — bootstrapping user from localStorage (missed SIGNED_IN race)");
-                  const u = { id: parsed.user.id, email: parsed.user.email ?? "" } as unknown as User;
-                  setUser(u);
-                  await fetchProfile(u.id, parsed.user.email ?? null, parsed.access_token);
-                  clearTimeout(safetyTimer);
-                  if (mounted.current) setLoading(false);
-                  return;
-                }
-              }
-            } catch { /* localStorage unavailable or corrupt — treat as logged out */ }
+        if (sessionBootstrapped.current) {
+          // Already have user + profile from localStorage bootstrap.
+          // Only care about explicit sign-out.
+          if (event === "SIGNED_OUT") {
+            setUser(null);
+            setProfile(null);
+            setProfileError(null);
+            setProfileWarning(null);
+            clearTimeout(safetyTimer);
+            if (mounted.current) setLoading(false);
           }
-          // Either sessionBootstrapped is true (SIGNED_IN already handled),
-          // or no valid stored session found → genuine logged-out state.
-          clearTimeout(safetyTimer);
-          if (mounted.current) setLoading(false);
+          // Ignore INITIAL_SESSION, SIGNED_IN, TOKEN_REFRESHED, USER_UPDATED —
+          // bootstrap already handled the initial state; Supabase's auto-refresh
+          // will keep the token current in localStorage.
           return;
         }
 
+        // Not bootstrapped — handle Supabase events normally (no stored session path).
         const u = session?.user ?? null;
         setUser(u);
-
         if (u) {
           sessionBootstrapped.current = true;
           await fetchProfile(u.id, u.email, session?.access_token ?? undefined);
@@ -340,7 +357,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setProfileError(null);
           setProfileWarning(null);
         }
-
         clearTimeout(safetyTimer);
         if (mounted.current) setLoading(false);
       },

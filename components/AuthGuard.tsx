@@ -58,10 +58,35 @@ export function AuthGuard({
 
   // 2 — No active session (redirect firing)
   if (!user) {
+    // Read localStorage directly so we can show a diagnostic in the UI
+    let lsInfo = "not checked";
+    try {
+      const raw = typeof window !== "undefined" ? localStorage.getItem("supabase.auth.token") : null;
+      if (!raw) {
+        lsInfo = "EMPTY — no session in localStorage";
+      } else {
+        const p = JSON.parse(raw) as { access_token?: string; expires_at?: number; user?: { id?: string } };
+        const now = Math.floor(Date.now() / 1000);
+        lsInfo = "uid=" + (p?.user?.id ?? "?") +
+          " | token=" + (p?.access_token ? p.access_token.slice(0, 12) + "…" : "MISSING") +
+          " | expires_at=" + (p?.expires_at ?? "?") +
+          " | now=" + now +
+          " | valid=" + (p?.access_token && p?.user?.id && (!p.expires_at || p.expires_at > now + 30) ? "YES" : "NO");
+      }
+    } catch (e) { lsInfo = "error: " + String(e); }
+
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3 text-center px-6">
+        <div className="flex flex-col items-center gap-4 text-center px-6 max-w-lg">
           <p className="text-sm text-slate-400">No active session. Redirecting to login…</p>
+          <div className="w-full rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-left text-[10px] font-mono text-slate-500 break-all">
+            <p className="text-slate-400 font-semibold mb-1">Auth Debug (AuthGuard)</p>
+            <p>localStorage: {lsInfo}</p>
+            <p>user: null</p>
+            <p>profile: null</p>
+            <p>loading: false</p>
+          </div>
+          <p className="text-[10px] text-slate-600">Screenshot this panel and share it</p>
         </div>
       </div>
     );

@@ -1,0 +1,364 @@
+// ─── /api/provider/ingestion/extract ─────────────────────────────────────────
+// POST { file_id, batch_id }
+//      → download file via signed URL, run GPT-4o extraction, store fields
+
+import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+function adminClient() {
+  return createClient(SUPABASE_URL, SERVICE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
+async function verifyToken(req: NextRequest) {
+  const token = (req.headers.get("authorization") ?? "").replace("Bearer ", "").trim();
+  if (!token) return null;
+  const admin = adminClient();
+  const { data: { user } } = await admin.auth.getUser(token);
+  return user ?? null;
+}
+
+// ── Document schemas ──────────────────────────────────────────────────────────
+
+function getSchemaForDocType(documentType: string): string {
+  const dt = (documentType ?? "").toLowerCase();
+
+  if (dt.includes("transport invoice") || dt.includes("service invoice")) {
+    return `Extract from this transport/service invoice:
+{
+  "invoice_number": "string",
+  "invoice_date": "YYYY-MM-DD",
+  "service_provider_name": "string",
+  "customer_name": "string",
+  "customer_email": "string",
+  "service_type": "string (e.g. Land Transport, Sea Freight)",
+  "route": "string (origin to destination)",
+  "cargo_description": "string",
+  "job_value": "numeric string (logistics fee)",
+  "currency": "string (MYR/USD/SGD etc)",
+  "payment_terms": "string (e.g. Net 30)",
+  "bl_awb_number": "string",
+  "container_number": "string",
+  "gross_weight_kg": "numeric string",
+  "volume_cbm": "numeric string",
+  "confidence_score": 0-100
+}`;
+  }
+
+  if (dt.includes("kastam") || dt.includes("customs")) {
+    return `Extract from this customs/kastam form:
+{
+  "customs_form_number": "string",
+  "customs_form_type": "string (K1/K2/K3/K8/K9 etc)",
+  "importer_name": "string",
+  "exporter_name": "string",
+  "hs_code": "string",
+  "cargo_description": "string",
+  "quantity": "numeric string",
+  "gross_weight_kg": "numeric string",
+  "cargo_value": "numeric string",
+  "duty_amount": "numeric string",
+  "tax_amount": "numeric string",
+  "currency": "string",
+  "permit_number": "string",
+  "declaration_date": "YYYY-MM-DD",
+  "confidence_score": 0-100
+}`;
+  }
+
+  if (dt.includes("commercial invoice")) {
+    return `Extract from this commercial invoice:
+{
+  "invoice_number": "string",
+  "invoice_date": "YYYY-MM-DD",
+  "seller_name": "string",
+  "buyer_name": "string",
+  "customer_name": "string",
+  "customer_email": "string",
+  "cargo_description": "string",
+  "hs_code": "string",
+  "quantity": "numeric string",
+  "gross_weight_kg": "numeric string",
+  "volume_cbm": "numeric string",
+  "cargo_value": "numeric string",
+  "currency": "string",
+  "payment_terms": "string",
+  "route": "string (country of origin to destination)",
+  "bl_awb_number": "string",
+  "confidence_score": 0-100
+}`;
+  }
+
+  if (dt.includes("packing list")) {
+    return `Extract from this packing list:
+{
+  "invoice_number": "string (if referenced)",
+  "shipper_name": "string",
+  "consignee_name": "string",
+  "cargo_description": "string",
+  "hs_code": "string",
+  "quantity": "numeric string",
+  "gross_weight_kg": "numeric string",
+  "net_weight_kg": "numeric string",
+  "volume_cbm": "numeric string",
+  "container_number": "string",
+  "bl_awb_number": "string",
+  "confidence_score": 0-100
+}`;
+  }
+
+  // Generic fallback
+  return `Extract all relevant fields from this document:
+{
+  "invoice_number": "string",
+  "invoice_date": "YYYY-MM-DD",
+  "customer_name": "string",
+  "customer_email": "string",
+  "service_type": "string",
+  "route": "string",
+  "cargo_description": "string",
+  "hs_code": "string",
+  "quantity": "string",
+  "gross_weight_kg": "string",
+  "volume_cbm": "string",
+  "job_value": "string",
+  "cargo_value": "string",
+  "duty_amount": "string",
+  "tax_amount": "string",
+  "currency": "string",
+  "payment_terms": "string",
+  "bl_awb_number": "string",
+  "container_number": "string",
+  "customs_form_number": "string",
+  "confidence_score": 0-100
+}`;
+}
+
+// ── POST ──────────────────────────────────────────────────────────────────────
+
+export async function POST(req: NextRequest) {
+  const user = await verifyToken(req);
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  let body: { file_id?: string; batch_id?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const { file_id, batch_id } = body;
+  if (!file_id || !batch_id) {
+    return NextResponse.json({ error: "file_id and batch_id are required" }, { status: 400 });
+  }
+
+  const admin = adminClient();
+
+  // Fetch file record
+  const { data: fileRecord, error: fileErr } = await admin
+    .from("document_ingestion_files")
+    .select("*")
+    .eq("id", file_id)
+    .single();
+
+  if (fileErr || !fileRecord) {
+    return NextResponse.json({ error: "File not found" }, { status: 404 });
+  }
+
+  // Mark extraction in progress
+  await admin
+    .from("document_ingestion_files")
+    .update({ extraction_status: "In Progress" })
+    .eq("id", file_id);
+
+  try {
+    // Create signed download URL (300s)
+    const { data: signedData, error: signedErr } = await admin.storage
+      .from("job-documents")
+      .createSignedUrl(fileRecord.storage_path, 300);
+
+    if (signedErr || !signedData?.signedUrl) {
+      throw new Error(signedErr?.message ?? "Failed to create signed download URL");
+    }
+
+    const signedUrl = signedData.signedUrl;
+    let extracted_data: Record<string, unknown> = {};
+    let confidence_score = 0;
+
+    if (process.env.OPENAI_API_KEY) {
+      const documentType = fileRecord.document_type ?? "Unknown";
+      const schema = getSchemaForDocType(documentType);
+      const systemPrompt = `You are a document data extraction expert for logistics and trade finance.
+Extract structured data from the provided document image.
+${schema}
+Return ONLY valid JSON. No markdown, no explanation, just the JSON object.
+If a field cannot be found, use null. confidence_score should reflect overall extraction quality (0-100).`;
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 58_000);
+
+      let oaiRes: Response;
+      try {
+        oaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + process.env.OPENAI_API_KEY,
+          },
+          body: JSON.stringify({
+            model: "gpt-4o",
+            max_tokens: 2000,
+            messages: [
+              { role: "system", content: systemPrompt },
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: "Extract structured data from this document and return valid JSON only." },
+                  { type: "image_url", image_url: { url: signedUrl, detail: "high" } },
+                ],
+              },
+            ],
+          }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+
+      if (!oaiRes.ok) {
+        const errText = await oaiRes.text();
+        throw new Error(`OpenAI API error ${oaiRes.status}: ${errText}`);
+      }
+
+      const oaiJson = await oaiRes.json();
+      const rawContent: string = oaiJson?.choices?.[0]?.message?.content ?? "{}";
+
+      // Strip markdown code fences if present
+      const cleaned = rawContent.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
+
+      try {
+        extracted_data = JSON.parse(cleaned);
+      } catch {
+        extracted_data = { raw_response: rawContent };
+      }
+
+      confidence_score = typeof extracted_data.confidence_score === "number"
+        ? (extracted_data.confidence_score as number)
+        : parseFloat(String(extracted_data.confidence_score ?? "0")) || 0;
+    } else {
+      // No API key — return empty schema
+      confidence_score = 0;
+      extracted_data = { note: "No OpenAI API key configured — extraction skipped" };
+    }
+
+    // Update file record
+    await admin
+      .from("document_ingestion_files")
+      .update({
+        extracted_data,
+        confidence_score,
+        extraction_status: "Completed",
+      })
+      .eq("id", file_id);
+
+    // Insert extracted fields (one row per non-null field, excluding confidence_score)
+    const skipFields = new Set(["confidence_score", "note", "raw_response"]);
+    const fieldInserts: Array<{
+      batch_id: string;
+      source_file_id: string;
+      field_name: string;
+      field_value: string | null;
+      field_value_numeric: number | null;
+      confidence_score: number;
+      source_document_type: string;
+      review_status: string;
+      created_at: string;
+    }> = [];
+
+    for (const [key, val] of Object.entries(extracted_data)) {
+      if (skipFields.has(key) || val === null || val === undefined || val === "") continue;
+      const numericVal = typeof val === "number" ? val : parseFloat(String(val));
+      fieldInserts.push({
+        batch_id,
+        source_file_id: file_id,
+        field_name: key,
+        field_value: String(val),
+        field_value_numeric: isNaN(numericVal) ? null : numericVal,
+        confidence_score,
+        source_document_type: fileRecord.document_type ?? "Unknown",
+        review_status: "Pending",
+        created_at: new Date().toISOString(),
+      });
+    }
+
+    if (fieldInserts.length > 0) {
+      // Delete existing fields for this file first to avoid duplicates
+      await admin
+        .from("document_ingestion_extracted_fields")
+        .delete()
+        .eq("source_file_id", file_id);
+
+      await admin
+        .from("document_ingestion_extracted_fields")
+        .insert(fieldInserts);
+    }
+
+    // Recalculate batch average confidence
+    const { data: allFiles } = await admin
+      .from("document_ingestion_files")
+      .select("confidence_score")
+      .eq("batch_id", batch_id)
+      .not("confidence_score", "is", null);
+
+    let avgConfidence: number | null = null;
+    if (allFiles && allFiles.length > 0) {
+      const sum = allFiles.reduce((acc: number, f: { confidence_score: number | null }) => acc + (f.confidence_score ?? 0), 0);
+      avgConfidence = sum / allFiles.length;
+    }
+
+    const newBatchStatus = avgConfidence !== null && avgConfidence < 70
+      ? "Review Required"
+      : "Extraction Completed";
+
+    await admin
+      .from("document_ingestion_batches")
+      .update({
+        confidence_score: avgConfidence,
+        ingestion_status: newBatchStatus,
+        extraction_provider: "openai",
+        extraction_model: "gpt-4o",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", batch_id);
+
+    return NextResponse.json({
+      ok: true,
+      extracted_data,
+      confidence_score,
+      fields_count: fieldInserts.length,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+
+    // Mark file and batch as failed
+    await admin
+      .from("document_ingestion_files")
+      .update({ extraction_status: "Failed" })
+      .eq("id", file_id);
+
+    await admin
+      .from("document_ingestion_batches")
+      .update({
+        ingestion_status: "Failed",
+        error_message: msg,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", batch_id);
+
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}

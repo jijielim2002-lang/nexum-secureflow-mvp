@@ -3,7 +3,7 @@
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { AuthGuard } from "@/components/AuthGuard";
-import AdminNav from "@/components/AdminNav";
+import { AdminNav } from "@/components/AdminNav";
 
 // ── Token helper ──────────────────────────────────────────────────────────────
 

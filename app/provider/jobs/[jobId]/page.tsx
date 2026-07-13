@@ -254,7 +254,7 @@ export default function ProviderJobDetailPage({
         .from("secured_jobs")
         .select(SELECT_COLS)
         .eq("job_reference", jobId)
-        .eq("service_provider_company_id", profile?.company_id ?? "")
+        .eq("service_provider_company_id", profile?.company_id ?? null)
         .maybeSingle();
 
       if (!mountedRef.current) return;

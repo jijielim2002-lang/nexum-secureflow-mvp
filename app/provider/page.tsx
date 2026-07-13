@@ -1,7 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { LogoutButton } from "@/components/LogoutButton";
 import { PilotBanner } from "@/components/PilotBanner";
@@ -72,29 +71,26 @@ export default function ProviderDashboard() {
   useEffect(() => {
     if (!profile?.company_id) return;
     async function load() {
-      const [jobsRes, membershipRes] = await Promise.all([
-        supabase
-          .from("secured_jobs")
-          .select(
-            "job_reference, customer, service_type, route, currency, job_value, payment_status, job_status, current_milestone",
-          )
-          .eq("service_provider_company_id", profile!.company_id)
-          .order("created_at", { ascending: false }),
-        supabase
-          .from("memberships")
-          .select("plan, status, annual_fee, included_jobs, used_jobs, end_date")
-          .eq("company_id", profile!.company_id)
-          .maybeSingle(),
-      ]);
-      if (jobsRes.error) {
-        setState({ status: "error", message: jobsRes.error.message });
-        return;
+      try {
+        let token = "";
+        try {
+          const stored = localStorage.getItem("supabase.auth.token");
+          if (stored) token = (JSON.parse(stored) as { access_token?: string }).access_token ?? "";
+        } catch { /* ignore */ }
+
+        const res = await fetch("/api/provider/jobs", {
+          headers: { Authorization: "Bearer " + token },
+        });
+        const json = await res.json() as { ok?: boolean; jobs?: JobRow[]; membership?: MembershipRow | null; error?: string };
+        if (!json.ok) throw new Error(json.error ?? "Failed to load");
+        setState({
+          status: "success",
+          jobs: json.jobs ?? [],
+          membership: json.membership ?? null,
+        });
+      } catch (e) {
+        setState({ status: "error", message: e instanceof Error ? e.message : "Unknown error" });
       }
-      setState({
-        status: "success",
-        jobs: (jobsRes.data as JobRow[]) ?? [],
-        membership: (membershipRes.data as MembershipRow | null) ?? null,
-      });
     }
     load();
   }, [profile]);

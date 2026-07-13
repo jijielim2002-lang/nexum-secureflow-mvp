@@ -126,10 +126,10 @@ export default function ProviderJobsPage() {
             </p>
           </div>
           <Link
-            href="/provider/jobs/new"
+            href="/provider/create-from-documents"
             className="shrink-0 rounded-lg border border-purple-500/40 bg-purple-500/15 px-4 py-2 text-sm font-semibold text-purple-300 hover:bg-purple-500/25 transition-colors"
           >
-            + Create Secured Job
+            + Create Job from Docs
           </Link>
         </div>
 

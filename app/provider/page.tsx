@@ -162,7 +162,7 @@ export default function ProviderDashboard() {
             <p className="text-xs text-slate-500 truncate">{profile?.full_name} · Service Provider</p>
           </div>
           <Link
-            href="/provider/jobs/new"
+            href="/provider/create-from-documents"
             className="shrink-0 rounded-lg border border-purple-500/40 bg-purple-500/15 px-4 py-2 text-xs font-semibold text-purple-300 hover:bg-purple-500/25 transition-colors"
           >
             + Create Secured Job
@@ -237,7 +237,7 @@ export default function ProviderDashboard() {
                 <p className="text-sm text-slate-400">No secured jobs yet.</p>
                 <p className="mt-2 text-xs text-slate-600">Create your first secured job to get started.</p>
                 <Link
-                  href="/provider/jobs/new"
+                  href="/provider/create-from-documents"
                   className="mt-4 inline-block rounded-lg border border-purple-500/40 bg-purple-500/15 px-4 py-2 text-xs font-semibold text-purple-300 hover:bg-purple-500/25 transition-colors"
                 >
                   + Create Secured Job

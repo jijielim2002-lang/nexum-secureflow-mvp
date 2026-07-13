@@ -69,7 +69,7 @@ export default function ProviderDashboard() {
   const [state, setState] = useState<PageState>({ status: "loading" });
 
   useEffect(() => {
-    if (!profile?.company_id) return;
+    if (!profile) return;
     async function load() {
       try {
         let token = "";

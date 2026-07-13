@@ -20,13 +20,19 @@ async function requireProvider(req: NextRequest) {
     .select("role, company_id")
     .eq("id", user.id)
     .maybeSingle();
-  if (!profile || profile.role !== "service_provider" || !profile.company_id) return null;
-  return { userId: user.id, companyId: profile.company_id as string };
+  if (!profile || profile.role !== "service_provider") return null;
+  // company_id may be null for providers not yet linked to a company
+  return { userId: user.id, companyId: (profile.company_id as string | null) ?? null };
 }
 
 export async function GET(req: NextRequest) {
   const caller = await requireProvider(req);
   if (!caller) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  // No company linked yet — return empty
+  if (!caller.companyId) {
+    return NextResponse.json({ ok: true, jobs: [], membership: null });
+  }
 
   const db = svc();
   const [jobsRes, membershipRes] = await Promise.all([

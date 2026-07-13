@@ -71,8 +71,8 @@ function getDevBypassRole(): string | null {
 
 type DBRow<T> = { data: T | null; error: { message: string } | null };
 
-// Only columns confirmed to exist in production: id, email, role.
-type MinRow = { id: string; email: string | null; role: string };
+// Only columns confirmed to exist in production: id, email, role, company_id.
+type MinRow = { id: string; email: string | null; role: string; company_id?: string | null };
 
 // ─── Timeout wrapper ──────────────────────────────────────────────────────────
 
@@ -151,7 +151,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const res = await withTimeout(
           supabase
             .from("profiles")
-            .select("id, email, role")
+            .select("id, email, role, company_id")
             .eq("id", userId)
             .maybeSingle() as Promise<DBRow<MinRow>>,
           PROFILE_FETCH_MS,
@@ -212,7 +212,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         email:        minRow.email ?? userEmail ?? "",
         full_name:    "",
         company_name: "",
-        company_id:   null,
+        company_id:   minRow.company_id ?? null,
         created_at:   new Date().toISOString(),
       };
 

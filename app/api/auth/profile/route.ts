@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
   // Fetch minimum profile — only the columns guaranteed to exist in production
   const { data, error } = await admin
     .from("profiles")
-    .select("id, email, role")
+    .select("id, email, role, company_id")
     .eq("id", user.id)
     .maybeSingle();
 
@@ -61,9 +61,10 @@ export async function GET(req: NextRequest) {
   // Return only safe, non-sensitive fields — never the service role key
   return NextResponse.json({
     profile: {
-      id:    data.id   as string,
-      email: (data.email as string | null) ?? user.email ?? "",
-      role:  data.role as string,
+      id:         data.id as string,
+      email:      (data.email as string | null) ?? user.email ?? "",
+      role:       data.role as string,
+      company_id: (data.company_id as string | null) ?? null,
     },
   });
 }

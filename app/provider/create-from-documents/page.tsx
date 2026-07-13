@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { AuthGuard } from "@/components/AuthGuard";
 import { AdminNav } from "@/components/AdminNav";
@@ -21,6 +21,15 @@ function getToken(): string {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type ProviderType = "Transporter" | "Customs Broker" | "Both";
+
+interface ProviderCustomer {
+  id: string;
+  customer_company: string;
+  contact_name: string;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+}
 
 interface DocSlot {
   docType: string;
@@ -107,7 +116,7 @@ function getDocSlots(providerType: ProviderType): DocSlot[] {
 
 // ── Progress bar ──────────────────────────────────────────────────────────────
 
-const STEPS = ["Provider Type", "Upload Docs", "Extract", "Review", "Confirm"];
+const STEPS = ["Customer", "Provider Type", "Upload Docs", "Extract", "Review", "Confirm"];
 
 function StepBar({ current }: { current: number }) {
   return (
@@ -176,6 +185,22 @@ function ConfidenceBadge({ score }: { score: number | null | undefined }) {
 function CreateFromDocumentsInner() {
   const router = useRouter();
   const [step, setStep] = useState(1);
+
+  // ── Customer state (Step 1) ───────────────────────────────────────────────
+  const [selectedCustomer, setSelectedCustomer] = useState<ProviderCustomer | null>(null);
+  const [customerList, setCustomerList] = useState<ProviderCustomer[]>([]);
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [showNewCustomerForm, setShowNewCustomerForm] = useState(false);
+  const [newCustomerForm, setNewCustomerForm] = useState({
+    customer_company: "",
+    contact_name: "",
+    email: "",
+    phone: "",
+    address: "",
+  });
+  const [savingCustomer, setSavingCustomer] = useState(false);
+
+  // ── Provider / upload state ───────────────────────────────────────────────
   const [providerType, setProviderType] = useState<ProviderType | null>(null);
   const [docSlots, setDocSlots] = useState<DocSlot[]>([]);
   const [batchId, setBatchId] = useState<string>("");
@@ -197,19 +222,30 @@ function CreateFromDocumentsInner() {
   const [loading, setLoading] = useState(false);
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  // ── Step 1: select provider type ─────────────────────────────────────────
+  // ── Load customer list on mount ───────────────────────────────────────────
+
+  useEffect(() => {
+    fetch("/api/provider/customers", {
+      headers: { Authorization: "Bearer " + getToken() },
+    })
+      .then((r) => r.json())
+      .then((d) => { if (d.ok) setCustomerList(d.customers); })
+      .catch(() => {});
+  }, []);
+
+  // ── Step 2: select provider type ─────────────────────────────────────────
 
   function handleSelectType(type: ProviderType) {
     setProviderType(type);
   }
 
-  function handleStep1Continue() {
+  function handleStep2Continue() {
     if (!providerType) return;
     setDocSlots(getDocSlots(providerType));
-    setStep(2);
+    setStep(3);
   }
 
-  // ── Step 2: file selection ────────────────────────────────────────────────
+  // ── Step 3: file selection ────────────────────────────────────────────────
 
   function handleFileSelect(docType: string, file: File | null) {
     setDocSlots((prev) =>
@@ -217,7 +253,7 @@ function CreateFromDocumentsInner() {
     );
   }
 
-  async function handleStep2Continue() {
+  async function handleStep3Continue() {
     setError("");
     const missingRequired = docSlots.filter((s) => s.required && !s.file).map((s) => s.docType);
     if (missingRequired.length > 0) {
@@ -305,7 +341,7 @@ function CreateFromDocumentsInner() {
       }
 
       setUploadedFiles([...uploaded]);
-      setStep(3);
+      setStep(4);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -313,7 +349,7 @@ function CreateFromDocumentsInner() {
     }
   }
 
-  // ── Step 3: extraction ────────────────────────────────────────────────────
+  // ── Step 4: extraction ────────────────────────────────────────────────────
 
   async function handleExtract() {
     setError("");
@@ -368,7 +404,7 @@ function CreateFromDocumentsInner() {
     }
   }
 
-  async function handleStep3Continue() {
+  async function handleStep4Continue() {
     // Load extracted data for review
     setError("");
     setLoading(true);
@@ -393,14 +429,27 @@ function CreateFromDocumentsInner() {
           merged[key] = f.field_value;
         }
       }
+
+      // Pre-fill customer fields from selected customer if not already extracted
+      if (selectedCustomer) {
+        if (!merged.customer_name && selectedCustomer.contact_name) {
+          merged.customer_name = selectedCustomer.contact_name;
+        }
+        if (!merged.customer_email && selectedCustomer.email) {
+          merged.customer_email = selectedCustomer.email;
+        }
+      }
+
       // Auto-build title if blank
       if (!merged.title && merged.customer_name) {
         merged.title = `Job for ${merged.customer_name}`;
+      } else if (!merged.title && selectedCustomer) {
+        merged.title = `Job for ${selectedCustomer.customer_company}`;
       } else if (!merged.title) {
         merged.title = `Job from ${batchRef}`;
       }
       setFieldValues(merged);
-      setStep(4);
+      setStep(5);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -408,7 +457,7 @@ function CreateFromDocumentsInner() {
     }
   }
 
-  // ── Step 4 → 5: confirm ───────────────────────────────────────────────────
+  // ── Step 5 → 6: confirm ───────────────────────────────────────────────────
 
   async function handleConfirm() {
     setError("");
@@ -420,12 +469,21 @@ function CreateFromDocumentsInner() {
           Authorization: "Bearer " + getToken(),
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ batch_id: batchId, job_data: fieldValues }),
+        body: JSON.stringify({
+          batch_id: batchId,
+          job_data: {
+            ...fieldValues,
+            customer_name: selectedCustomer?.contact_name ?? fieldValues.customer_name,
+            customer_email: selectedCustomer?.email ?? fieldValues.customer_email,
+            customer_company: selectedCustomer?.customer_company ?? "",
+            provider_customer_id: selectedCustomer?.id ?? "",
+          },
+        }),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error ?? "Confirmation failed");
       setConfirmedJobRef(data.job_reference);
-      setStep(5);
+      setStep(6);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -488,8 +546,172 @@ function CreateFromDocumentsInner() {
           </div>
         )}
 
-        {/* ── Step 1: Provider Type ── */}
+        {/* ── Step 1: Select Customer ── */}
         {step === 1 && (
+          <div>
+            <h2 className="text-lg font-semibold text-slate-200 mb-1">Select Customer</h2>
+            <p className="text-sm text-slate-500 mb-5">Choose an existing customer or add a new one.</p>
+
+            {/* Search */}
+            <input
+              type="text"
+              placeholder="Search by company or contact name..."
+              value={customerSearch}
+              onChange={(e) => setCustomerSearch(e.target.value)}
+              className="w-full mb-4 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:border-blue-600 focus:outline-none"
+            />
+
+            {/* Customer list */}
+            <div className="space-y-2 mb-4 max-h-72 overflow-y-auto">
+              {customerList
+                .filter(
+                  (c) =>
+                    c.customer_company.toLowerCase().includes(customerSearch.toLowerCase()) ||
+                    c.contact_name.toLowerCase().includes(customerSearch.toLowerCase())
+                )
+                .map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => setSelectedCustomer(c)}
+                    className={`w-full text-left p-4 rounded-xl border-2 transition-all ${
+                      selectedCustomer?.id === c.id
+                        ? "border-blue-500 bg-blue-900/20"
+                        : "border-slate-700 bg-slate-900 hover:border-slate-500"
+                    }`}
+                  >
+                    <div className="font-medium text-slate-100 text-sm">{c.customer_company}</div>
+                    <div className="text-xs text-slate-400 mt-0.5">
+                      {c.contact_name}
+                      {c.email ? ` · ${c.email}` : ""}
+                      {c.phone ? ` · ${c.phone}` : ""}
+                    </div>
+                    {c.address && <div className="text-xs text-slate-500 mt-0.5">{c.address}</div>}
+                  </button>
+                ))}
+              {customerList.length === 0 && !showNewCustomerForm && (
+                <p className="text-sm text-slate-500 text-center py-6">
+                  No customers yet. Add your first one below.
+                </p>
+              )}
+            </div>
+
+            {/* Add new customer inline */}
+            {!showNewCustomerForm ? (
+              <button
+                onClick={() => setShowNewCustomerForm(true)}
+                className="text-sm text-blue-400 hover:text-blue-300 underline underline-offset-2 mb-6"
+              >
+                + Add new customer
+              </button>
+            ) : (
+              <div className="rounded-xl border border-slate-700 bg-slate-900 p-5 mb-6 space-y-3">
+                <h3 className="text-sm font-semibold text-slate-200">New Customer</h3>
+                {(
+                  [
+                    { label: "Customer Company *", key: "customer_company" },
+                    { label: "Contact Name *", key: "contact_name" },
+                    { label: "Email", key: "email" },
+                    { label: "Phone", key: "phone" },
+                  ] as { label: string; key: keyof typeof newCustomerForm }[]
+                ).map(({ label, key }) => (
+                  <div key={key}>
+                    <label className="block text-xs text-slate-400 mb-1">{label}</label>
+                    <input
+                      value={newCustomerForm[key]}
+                      onChange={(e) =>
+                        setNewCustomerForm((f) => ({ ...f, [key]: e.target.value }))
+                      }
+                      className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:border-blue-600 focus:outline-none"
+                    />
+                  </div>
+                ))}
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Address</label>
+                  <textarea
+                    value={newCustomerForm.address}
+                    onChange={(e) =>
+                      setNewCustomerForm((f) => ({ ...f, address: e.target.value }))
+                    }
+                    rows={2}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:border-blue-600 focus:outline-none"
+                  />
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={async () => {
+                      if (!newCustomerForm.customer_company || !newCustomerForm.contact_name) {
+                        alert("Company and contact name are required.");
+                        return;
+                      }
+                      setSavingCustomer(true);
+                      try {
+                        const res = await fetch("/api/provider/customers", {
+                          method: "POST",
+                          headers: {
+                            Authorization: "Bearer " + getToken(),
+                            "Content-Type": "application/json",
+                          },
+                          body: JSON.stringify(newCustomerForm),
+                        });
+                        const d = await res.json();
+                        if (!d.ok) throw new Error(d.error);
+                        setCustomerList((prev) => [...prev, d.customer]);
+                        setSelectedCustomer(d.customer);
+                        setShowNewCustomerForm(false);
+                        setNewCustomerForm({
+                          customer_company: "",
+                          contact_name: "",
+                          email: "",
+                          phone: "",
+                          address: "",
+                        });
+                      } catch (e) {
+                        alert(e instanceof Error ? e.message : "Failed to save");
+                      } finally {
+                        setSavingCustomer(false);
+                      }
+                    }}
+                    disabled={savingCustomer}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm rounded-lg font-medium"
+                  >
+                    {savingCustomer ? "Saving…" : "Save Customer"}
+                  </button>
+                  <button
+                    onClick={() => setShowNewCustomerForm(false)}
+                    className="px-4 py-2 border border-slate-700 text-slate-400 text-sm rounded-lg hover:text-slate-200"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {error && <p className="text-sm text-red-400 mb-4">{error}</p>}
+
+            <button
+              onClick={() => {
+                if (!selectedCustomer) {
+                  setError("Please select or create a customer.");
+                  return;
+                }
+                setError("");
+                setStep(2);
+              }}
+              disabled={!selectedCustomer}
+              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
+            >
+              Continue
+            </button>
+            {selectedCustomer && (
+              <p className="mt-3 text-xs text-slate-500">
+                Selected: <span className="text-slate-300">{selectedCustomer.customer_company}</span>
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* ── Step 2: Provider Type ── */}
+        {step === 2 && (
           <div>
             <h2 className="text-lg font-semibold text-slate-200 mb-4">
               Select your service type
@@ -534,28 +756,43 @@ function CreateFromDocumentsInner() {
                   <div className="text-xs text-slate-400 mb-3">{desc}</div>
                   <div className="space-y-1">
                     {(docs as typeof TRANSPORTER_DOCS).map((doc) => (
-                      <div key={doc.docType} className={`text-xs flex items-center gap-1 ${doc.required ? "text-slate-300" : "text-slate-500"}`}>
+                      <div
+                        key={doc.docType}
+                        className={`text-xs flex items-center gap-1 ${
+                          doc.required ? "text-slate-300" : "text-slate-500"
+                        }`}
+                      >
                         <span>{doc.required ? "★" : "•"}</span>
                         <span>{doc.docType}</span>
-                        {doc.required && <span className="text-blue-400 text-[10px]">required</span>}
+                        {doc.required && (
+                          <span className="text-blue-400 text-[10px]">required</span>
+                        )}
                       </div>
                     ))}
                   </div>
                 </button>
               ))}
             </div>
-            <button
-              onClick={handleStep1Continue}
-              disabled={!providerType}
-              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
-            >
-              Continue
-            </button>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setStep(1)}
+                className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm transition-colors"
+              >
+                Back
+              </button>
+              <button
+                onClick={handleStep2Continue}
+                disabled={!providerType}
+                className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
+              >
+                Continue
+              </button>
+            </div>
           </div>
         )}
 
-        {/* ── Step 2: Upload ── */}
-        {step === 2 && (
+        {/* ── Step 3: Upload ── */}
+        {step === 3 && (
           <div>
             <h2 className="text-lg font-semibold text-slate-200 mb-1">
               Upload Documents
@@ -644,13 +881,13 @@ function CreateFromDocumentsInner() {
 
             <div className="flex gap-3">
               <button
-                onClick={() => setStep(1)}
+                onClick={() => setStep(2)}
                 className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm transition-colors"
               >
                 Back
               </button>
               <button
-                onClick={handleStep2Continue}
+                onClick={handleStep3Continue}
                 disabled={loading}
                 className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
               >
@@ -660,8 +897,8 @@ function CreateFromDocumentsInner() {
           </div>
         )}
 
-        {/* ── Step 3: Extract ── */}
-        {step === 3 && (
+        {/* ── Step 4: Extract ── */}
+        {step === 4 && (
           <div>
             <h2 className="text-lg font-semibold text-slate-200 mb-2">
               Extract Job Information
@@ -735,7 +972,7 @@ function CreateFromDocumentsInner() {
               ) && (
                 <div className="flex gap-3">
                   <button
-                    onClick={handleStep3Continue}
+                    onClick={handleStep4Continue}
                     disabled={loading}
                     className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg font-medium transition-colors"
                   >
@@ -746,8 +983,8 @@ function CreateFromDocumentsInner() {
           </div>
         )}
 
-        {/* ── Step 4: Review ── */}
-        {step === 4 && (
+        {/* ── Step 5: Review ── */}
+        {step === 5 && (
           <div>
             <h2 className="text-lg font-semibold text-slate-200 mb-2">
               Review Extracted Data
@@ -824,7 +1061,7 @@ function CreateFromDocumentsInner() {
 
             <div className="flex gap-3">
               <button
-                onClick={() => setStep(3)}
+                onClick={() => setStep(4)}
                 className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm transition-colors"
               >
                 Back
@@ -840,8 +1077,8 @@ function CreateFromDocumentsInner() {
           </div>
         )}
 
-        {/* ── Step 5: Success ── */}
-        {step === 5 && (
+        {/* ── Step 6: Success ── */}
+        {step === 6 && (
           <div className="text-center py-12">
             <div className="text-5xl mb-4">✓</div>
             <h2 className="text-2xl font-bold text-emerald-400 mb-2">

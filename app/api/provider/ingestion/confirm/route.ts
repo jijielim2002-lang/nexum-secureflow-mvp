@@ -42,6 +42,8 @@ function generateJobReference(): string {
 interface JobData {
   customer_name?: string;
   customer_email?: string;
+  customer_company?: string;
+  provider_customer_id?: string;
   service_type?: string;
   route?: string;
   cargo_description?: string;
@@ -112,8 +114,10 @@ export async function POST(req: NextRequest) {
   }
 
   // Include customer info if columns exist (non-breaking)
-  if (job_data.customer_name)  jobInsert.customer_name  = job_data.customer_name;
-  if (job_data.customer_email) jobInsert.customer_email = job_data.customer_email;
+  if (job_data.customer_name)        jobInsert.customer_name        = job_data.customer_name;
+  if (job_data.customer_email)       jobInsert.customer_email       = job_data.customer_email;
+  if (job_data.customer_company)     jobInsert.customer_company     = job_data.customer_company;
+  if (job_data.provider_customer_id) jobInsert.provider_customer_id = job_data.provider_customer_id;
 
   const { error: jobErr } = await admin
     .from("secured_jobs")

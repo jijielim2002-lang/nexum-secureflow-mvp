@@ -1,12 +1,20 @@
 // ─── /api/provider/ingestion/extract ─────────────────────────────────────────
 // POST { file_id, batch_id }
-//      → download file via signed URL, run GPT-4o extraction, store fields
+//      → download file via signed URL
+//      → Primary LLM (OpenAI gpt-4o) extraction
+//      → Secondary LLM (Anthropic claude-3-5-haiku) cross-check (if ENABLE_DUAL_LLM_EXTRACTION=true)
+//      → Store comparison results in document_extraction_comparisons
+//      → Wording: "AI-extracted draft" / "Cross-checked" / "Conflict detected"
+//        NEVER "AI verified", "guaranteed accurate", "bank verified"
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+const ENABLE_DUAL_LLM = process.env.ENABLE_DUAL_LLM_EXTRACTION === "true";
+const ENABLE_LLM      = process.env.ENABLE_LLM_DOCUMENT_EXTRACTION !== "false"; // default on if key set
 
 function adminClient() {
   return createClient(SUPABASE_URL, SERVICE_KEY, {
@@ -45,6 +53,43 @@ function getSchemaForDocType(documentType: string): string {
   "container_number": "string",
   "gross_weight_kg": "numeric string",
   "volume_cbm": "numeric string",
+  "confidence_score": 0-100
+}`;
+  }
+
+  if (dt.includes("delivery order") || dt.includes("do")) {
+    return `Extract from this Delivery Order (DO):
+{
+  "do_number": "string",
+  "do_date": "YYYY-MM-DD",
+  "consignee_name": "string",
+  "shipper_name": "string",
+  "vessel_voyage": "string",
+  "port_of_loading": "string",
+  "port_of_discharge": "string",
+  "cargo_description": "string",
+  "container_number": "string",
+  "bl_awb_number": "string",
+  "gross_weight_kg": "numeric string",
+  "volume_cbm": "numeric string",
+  "release_date": "YYYY-MM-DD",
+  "confidence_score": 0-100
+}`;
+  }
+
+  if (dt.includes("pod") || dt.includes("proof of delivery")) {
+    return `Extract from this Proof of Delivery (POD):
+{
+  "pod_number": "string",
+  "delivery_date": "YYYY-MM-DD",
+  "recipient_name": "string",
+  "recipient_signature": "present/absent",
+  "delivery_address": "string",
+  "cargo_description": "string",
+  "condition_on_delivery": "string (Good/Damaged/Partial)",
+  "driver_name": "string",
+  "vehicle_plate": "string",
+  "remarks": "string",
   "confidence_score": 0-100
 }`;
   }
@@ -111,6 +156,61 @@ function getSchemaForDocType(documentType: string): string {
 }`;
   }
 
+  if (dt.includes("bl") || dt.includes("awb") || dt.includes("bill of lading") || dt.includes("airway")) {
+    return `Extract from this Bill of Lading / Airway Bill / Delivery Order:
+{
+  "bl_awb_number": "string",
+  "issue_date": "YYYY-MM-DD",
+  "shipper_name": "string",
+  "consignee_name": "string",
+  "notify_party": "string",
+  "vessel_flight": "string",
+  "port_of_loading": "string",
+  "port_of_discharge": "string",
+  "cargo_description": "string",
+  "container_number": "string",
+  "gross_weight_kg": "numeric string",
+  "volume_cbm": "numeric string",
+  "freight_terms": "string (Prepaid/Collect)",
+  "confidence_score": 0-100
+}`;
+  }
+
+  if (dt.includes("permit") || dt.includes("license")) {
+    return `Extract from this permit or license:
+{
+  "permit_number": "string",
+  "permit_type": "string",
+  "issued_to": "string",
+  "issued_by": "string",
+  "issue_date": "YYYY-MM-DD",
+  "expiry_date": "YYYY-MM-DD",
+  "cargo_description": "string",
+  "hs_code": "string",
+  "quantity_allowed": "string",
+  "conditions": "string",
+  "confidence_score": 0-100
+}`;
+  }
+
+  if (dt.includes("payment slip") || dt.includes("payment proof") || dt.includes("receipt")) {
+    return `Extract from this payment slip or receipt:
+{
+  "receipt_number": "string",
+  "payment_date": "YYYY-MM-DD",
+  "payer_name": "string",
+  "payee_name": "string",
+  "bank_name": "string",
+  "account_number": "string (last 4 digits only if partially visible)",
+  "amount": "numeric string",
+  "currency": "string",
+  "reference_number": "string",
+  "payment_method": "string (Online Transfer/Cheque/Cash etc)",
+  "remarks": "string",
+  "confidence_score": 0-100
+}`;
+  }
+
   // Generic fallback
   return `Extract all relevant fields from this document:
 {
@@ -136,6 +236,201 @@ function getSchemaForDocType(documentType: string): string {
   "customs_form_number": "string",
   "confidence_score": 0-100
 }`;
+}
+
+// ── OpenAI extraction ──────────────────────────────────────────────────────────
+
+async function extractWithOpenAI(
+  signedUrl:    string,
+  documentType: string,
+): Promise<{ data: Record<string, unknown>; confidence: number; model: string; durationMs: number }> {
+  const schema = getSchemaForDocType(documentType);
+  const systemPrompt = `You are a document data extraction expert for logistics and trade finance.
+Extract structured data from the provided document image.
+${schema}
+Return ONLY valid JSON. No markdown, no explanation, just the JSON object.
+If a field cannot be found, use null. confidence_score should reflect overall extraction quality (0-100).`;
+
+  const start = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 55_000);
+
+  let oaiRes: Response;
+  try {
+    oaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + process.env.OPENAI_API_KEY,
+      },
+      body: JSON.stringify({
+        model: "gpt-4o",
+        max_tokens: 2000,
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Extract structured data from this document and return valid JSON only." },
+              { type: "image_url", image_url: { url: signedUrl, detail: "high" } },
+            ],
+          },
+        ],
+      }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const durationMs = Date.now() - start;
+
+  if (!oaiRes.ok) {
+    const errText = await oaiRes.text();
+    throw new Error(`OpenAI API error ${oaiRes.status}: ${errText}`);
+  }
+
+  const oaiJson = await oaiRes.json();
+  const rawContent: string = oaiJson?.choices?.[0]?.message?.content ?? "{}";
+  const cleaned = rawContent.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
+
+  let parsed: Record<string, unknown> = {};
+  try { parsed = JSON.parse(cleaned); } catch { parsed = { raw_response: rawContent }; }
+
+  const confidence = typeof parsed.confidence_score === "number"
+    ? parsed.confidence_score
+    : parseFloat(String(parsed.confidence_score ?? "0")) || 0;
+
+  return { data: parsed, confidence, model: "gpt-4o", durationMs };
+}
+
+// ── Anthropic extraction ───────────────────────────────────────────────────────
+
+async function extractWithAnthropic(
+  signedUrl:    string,
+  documentType: string,
+): Promise<{ data: Record<string, unknown>; confidence: number; model: string; durationMs: number }> {
+  const schema = getSchemaForDocType(documentType);
+  const systemPrompt = `You are a document data extraction expert for logistics and trade finance.
+Extract structured data from the provided document image.
+${schema}
+Return ONLY valid JSON. No markdown, no explanation, just the JSON object.
+If a field cannot be found, use null. confidence_score should reflect overall extraction quality (0-100).`;
+
+  // Download image bytes to pass as base64 (Anthropic requires base64 for images)
+  const imgRes = await fetch(signedUrl);
+  if (!imgRes.ok) throw new Error("Failed to fetch document for Anthropic: " + imgRes.status);
+  const imgBuf = await imgRes.arrayBuffer();
+  const base64 = Buffer.from(imgBuf).toString("base64");
+  const contentType = imgRes.headers.get("content-type") ?? "image/jpeg";
+  // Anthropic only supports jpeg/png/gif/webp
+  const safeType = contentType.startsWith("image/") ? contentType : "image/jpeg";
+
+  const start = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 55_000);
+
+  let antRes: Response;
+  try {
+    antRes = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type":      "application/json",
+        "x-api-key":         process.env.ANTHROPIC_API_KEY ?? "",
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model:      "claude-haiku-4-5-20251001",
+        max_tokens: 2000,
+        system:     systemPrompt,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type:   "image",
+                source: { type: "base64", media_type: safeType, data: base64 },
+              },
+              { type: "text", text: "Extract structured data from this document and return valid JSON only." },
+            ],
+          },
+        ],
+      }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const durationMs = Date.now() - start;
+
+  if (!antRes.ok) {
+    const errText = await antRes.text();
+    throw new Error(`Anthropic API error ${antRes.status}: ${errText}`);
+  }
+
+  const antJson = await antRes.json();
+  const rawContent: string = antJson?.content?.[0]?.text ?? "{}";
+  const cleaned = rawContent.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
+
+  let parsed: Record<string, unknown> = {};
+  try { parsed = JSON.parse(cleaned); } catch { parsed = { raw_response: rawContent }; }
+
+  const confidence = typeof parsed.confidence_score === "number"
+    ? parsed.confidence_score
+    : parseFloat(String(parsed.confidence_score ?? "0")) || 0;
+
+  return { data: parsed, confidence, model: "claude-haiku-4-5-20251001", durationMs };
+}
+
+// ── Field comparison ──────────────────────────────────────────────────────────
+
+type FieldResult = {
+  matched:    string[];
+  mismatched: Array<{ field: string; primary: unknown; secondary: unknown }>;
+  missing:    string[];
+  status:     "Matched" | "Minor Differences" | "Conflict";
+};
+
+function compareFields(
+  primary:   Record<string, unknown>,
+  secondary: Record<string, unknown>,
+): FieldResult {
+  const skip = new Set(["confidence_score", "raw_response", "note"]);
+  const allKeys = new Set([...Object.keys(primary), ...Object.keys(secondary)].filter(k => !skip.has(k)));
+
+  const matched:    string[] = [];
+  const mismatched: Array<{ field: string; primary: unknown; secondary: unknown }> = [];
+  const missing:    string[] = [];
+
+  for (const key of allKeys) {
+    const pVal = primary[key];
+    const sVal = secondary[key];
+
+    if ((pVal == null || pVal === "") && (sVal == null || sVal === "")) continue;
+    if (pVal == null || pVal === "") { missing.push(key); continue; }
+    if (sVal == null || sVal === "") { missing.push(key); continue; }
+
+    const pStr = String(pVal).trim().toLowerCase();
+    const sStr = String(sVal).trim().toLowerCase();
+
+    if (pStr === sStr) {
+      matched.push(key);
+    } else {
+      mismatched.push({ field: key, primary: pVal, secondary: sVal });
+    }
+  }
+
+  let status: "Matched" | "Minor Differences" | "Conflict";
+  if (mismatched.length === 0) {
+    status = "Matched";
+  } else if (mismatched.length <= 2) {
+    status = "Minor Differences";
+  } else {
+    status = "Conflict";
+  }
+
+  return { matched, mismatched, missing, status };
 }
 
 // ── POST ──────────────────────────────────────────────────────────────────────
@@ -185,75 +480,115 @@ export async function POST(req: NextRequest) {
       throw new Error(signedErr?.message ?? "Failed to create signed download URL");
     }
 
-    const signedUrl = signedData.signedUrl;
+    const signedUrl     = signedData.signedUrl;
+    const documentType  = fileRecord.document_type ?? "Unknown";
+
     let extracted_data: Record<string, unknown> = {};
     let confidence_score = 0;
+    let comparisonStatus: string | null = null;
 
-    if (process.env.OPENAI_API_KEY) {
-      const documentType = fileRecord.document_type ?? "Unknown";
-      const schema = getSchemaForDocType(documentType);
-      const systemPrompt = `You are a document data extraction expert for logistics and trade finance.
-Extract structured data from the provided document image.
-${schema}
-Return ONLY valid JSON. No markdown, no explanation, just the JSON object.
-If a field cannot be found, use null. confidence_score should reflect overall extraction quality (0-100).`;
-
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 58_000);
-
-      let oaiRes: Response;
-      try {
-        oaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": "Bearer " + process.env.OPENAI_API_KEY,
-          },
-          body: JSON.stringify({
-            model: "gpt-4o",
-            max_tokens: 2000,
-            messages: [
-              { role: "system", content: systemPrompt },
-              {
-                role: "user",
-                content: [
-                  { type: "text", text: "Extract structured data from this document and return valid JSON only." },
-                  { type: "image_url", image_url: { url: signedUrl, detail: "high" } },
-                ],
-              },
-            ],
-          }),
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timer);
-      }
-
-      if (!oaiRes.ok) {
-        const errText = await oaiRes.text();
-        throw new Error(`OpenAI API error ${oaiRes.status}: ${errText}`);
-      }
-
-      const oaiJson = await oaiRes.json();
-      const rawContent: string = oaiJson?.choices?.[0]?.message?.content ?? "{}";
-
-      // Strip markdown code fences if present
-      const cleaned = rawContent.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
-
-      try {
-        extracted_data = JSON.parse(cleaned);
-      } catch {
-        extracted_data = { raw_response: rawContent };
-      }
-
-      confidence_score = typeof extracted_data.confidence_score === "number"
-        ? (extracted_data.confidence_score as number)
-        : parseFloat(String(extracted_data.confidence_score ?? "0")) || 0;
-    } else {
+    if (!process.env.OPENAI_API_KEY || !ENABLE_LLM) {
       // No API key — return empty schema
+      extracted_data = { note: "No OpenAI API key configured — extraction skipped (AI-extracted draft)" };
       confidence_score = 0;
-      extracted_data = { note: "No OpenAI API key configured — extraction skipped" };
+    } else {
+      // ── Primary: OpenAI ────────────────────────────────────────────────────
+      const primary = await extractWithOpenAI(signedUrl, documentType);
+      extracted_data = primary.data;
+      confidence_score = primary.confidence;
+
+      // Record primary run
+      const { data: primaryRun } = await admin
+        .from("document_extraction_runs")
+        .insert({
+          file_id,
+          provider:        "OpenAI",
+          model:           primary.model,
+          status:          "Completed",
+          raw_output:      primary.data,
+          extracted_fields: primary.data,
+          confidence_score: primary.confidence,
+          duration_ms:     primary.durationMs,
+        })
+        .select("id")
+        .single();
+
+      // ── Secondary: Anthropic (if enabled) ─────────────────────────────────
+      if (ENABLE_DUAL_LLM && process.env.ANTHROPIC_API_KEY) {
+        let secondaryRunId: string | null = null;
+        let comparison: FieldResult | null = null;
+
+        try {
+          const secondary = await extractWithAnthropic(signedUrl, documentType);
+
+          const { data: secondaryRun } = await admin
+            .from("document_extraction_runs")
+            .insert({
+              file_id,
+              provider:        "Anthropic",
+              model:           secondary.model,
+              status:          "Completed",
+              raw_output:      secondary.data,
+              extracted_fields: secondary.data,
+              confidence_score: secondary.confidence,
+              duration_ms:     secondary.durationMs,
+            })
+            .select("id")
+            .single();
+
+          secondaryRunId = secondaryRun?.id ?? null;
+          comparison     = compareFields(primary.data, secondary.data);
+          comparisonStatus = comparison.status;
+
+          // Average confidence
+          confidence_score = (primary.confidence + secondary.confidence) / 2;
+
+          // Store comparison
+          const batchRecord = await admin
+            .from("document_ingestion_batches")
+            .select("batch_reference")
+            .eq("id", batch_id)
+            .maybeSingle();
+
+          await admin
+            .from("document_extraction_comparisons")
+            .insert({
+              file_id,
+              job_reference:      batchRecord?.data?.batch_reference ?? null,
+              primary_provider:   "OpenAI",
+              secondary_provider: "Anthropic",
+              primary_run_id:     primaryRun?.id ?? null,
+              secondary_run_id:   secondaryRunId,
+              comparison_status:  comparison.status,
+              matched_fields:     comparison.matched,
+              mismatched_fields:  comparison.mismatched,
+              missing_fields:     comparison.missing,
+              confidence_score,
+              final_review_status: "Pending",
+            });
+
+        } catch (antErr) {
+          const msg = antErr instanceof Error ? antErr.message : String(antErr);
+          console.warn("[extract] Anthropic secondary failed, using primary only:", msg);
+
+          await admin.from("document_extraction_runs").insert({
+            file_id,
+            provider:  "Anthropic",
+            model:     "claude-haiku-4-5-20251001",
+            status:    "Failed",
+            error_message: msg,
+          });
+          comparisonStatus = "Failed";
+        }
+      }
     }
+
+    // Determine extraction label for wording compliance
+    let extractionLabel = "AI-extracted draft";
+    if (comparisonStatus === "Matched")           extractionLabel = "Cross-checked";
+    else if (comparisonStatus === "Minor Differences") extractionLabel = "Cross-checked with minor differences";
+    else if (comparisonStatus === "Conflict")     extractionLabel = "Conflict detected — admin review required";
+    else if (comparisonStatus === "Failed")       extractionLabel = "AI-extracted draft (secondary check failed)";
 
     // Update file record
     await admin
@@ -262,10 +597,11 @@ If a field cannot be found, use null. confidence_score should reflect overall ex
         extracted_data,
         confidence_score,
         extraction_status: "Completed",
+        extraction_label:  extractionLabel,
       })
       .eq("id", file_id);
 
-    // Insert extracted fields (one row per non-null field, excluding confidence_score)
+    // Insert extracted fields
     const skipFields = new Set(["confidence_score", "note", "raw_response"]);
     const fieldInserts: Array<{
       batch_id: string;
@@ -289,14 +625,13 @@ If a field cannot be found, use null. confidence_score should reflect overall ex
         field_value: String(val),
         field_value_numeric: isNaN(numericVal) ? null : numericVal,
         confidence_score,
-        source_document_type: fileRecord.document_type ?? "Unknown",
+        source_document_type: documentType,
         review_status: "Pending",
         created_at: new Date().toISOString(),
       });
     }
 
     if (fieldInserts.length > 0) {
-      // Delete existing fields for this file first to avoid duplicates
       await admin
         .from("document_ingestion_extracted_fields")
         .delete()
@@ -316,7 +651,10 @@ If a field cannot be found, use null. confidence_score should reflect overall ex
 
     let avgConfidence: number | null = null;
     if (allFiles && allFiles.length > 0) {
-      const sum = allFiles.reduce((acc: number, f: { confidence_score: number | null }) => acc + (f.confidence_score ?? 0), 0);
+      const sum = allFiles.reduce(
+        (acc: number, f: { confidence_score: number | null }) => acc + (f.confidence_score ?? 0),
+        0,
+      );
       avgConfidence = sum / allFiles.length;
     }
 
@@ -327,11 +665,11 @@ If a field cannot be found, use null. confidence_score should reflect overall ex
     await admin
       .from("document_ingestion_batches")
       .update({
-        confidence_score: avgConfidence,
-        ingestion_status: newBatchStatus,
-        extraction_provider: "openai",
-        extraction_model: "gpt-4o",
-        updated_at: new Date().toISOString(),
+        confidence_score:    avgConfidence,
+        ingestion_status:    newBatchStatus,
+        extraction_provider: ENABLE_DUAL_LLM ? "OpenAI + Anthropic" : "OpenAI",
+        extraction_model:    ENABLE_DUAL_LLM ? "gpt-4o + claude-haiku-4-5-20251001" : "gpt-4o",
+        updated_at:          new Date().toISOString(),
       })
       .eq("id", batch_id);
 
@@ -339,12 +677,15 @@ If a field cannot be found, use null. confidence_score should reflect overall ex
       ok: true,
       extracted_data,
       confidence_score,
+      extraction_label: extractionLabel,
+      comparison_status: comparisonStatus,
+      dual_llm_enabled: ENABLE_DUAL_LLM,
       fields_count: fieldInserts.length,
     });
+
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
 
-    // Mark file and batch as failed
     await admin
       .from("document_ingestion_files")
       .update({ extraction_status: "Failed" })
@@ -354,8 +695,8 @@ If a field cannot be found, use null. confidence_score should reflect overall ex
       .from("document_ingestion_batches")
       .update({
         ingestion_status: "Failed",
-        error_message: msg,
-        updated_at: new Date().toISOString(),
+        error_message:    msg,
+        updated_at:       new Date().toISOString(),
       })
       .eq("id", batch_id);
 

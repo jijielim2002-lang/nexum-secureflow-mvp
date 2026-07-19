@@ -143,3 +143,31 @@ export async function batchGetMaskedNames(
 
   return results;
 }
+
+
+// ─── Sensitive data access logging (server-side only) ─────────────────────────
+
+export async function logSensitiveAccess(
+  adminClient:      SupabaseClient,
+  userId:           string,
+  companyId:        string | null,
+  targetRecordType: string,
+  targetRecordId:   string,
+  sensitiveField:   string,
+  accessLevel:      "Full" | "Masked" | "Hidden",
+  accessReason?:    string,
+): Promise<void> {
+  try {
+    await adminClient.from("sensitive_data_access_logs").insert({
+      user_id:            userId,
+      company_id:         companyId,
+      target_record_type: targetRecordType,
+      target_record_id:   targetRecordId,
+      sensitive_field:    sensitiveField,
+      access_level:       accessLevel,
+      access_reason:      accessReason ?? null,
+    });
+  } catch {
+    // Never let logging failure break the main flow
+  }
+}

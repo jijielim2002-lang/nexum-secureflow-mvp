@@ -196,6 +196,10 @@ export default function ProviderJobDetailPage({
   const [pageTimedOut, setPageTimedOut]   = useState(false);
   const [coreOnly, setCoreOnly]           = useState(OPTIONAL_MODULES_DISABLED);
   const [bgLoading, setBgLoading]         = useState(false);
+  const [maskedParties, setMaskedParties] = useState<{
+    service_provider: { display_name: string; is_masked: boolean; visibility_level: string };
+    customer:         { display_name: string; is_masked: boolean; visibility_level: string };
+  } | null>(null);
   const timerRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
   const [repairLoading, setRepairLoading] = useState(false);
@@ -267,6 +271,22 @@ export default function ProviderJobDetailPage({
       } else {
         setFetchState({ status: "success", job: data as JobRow });
         setBgLoading(true);
+        // Fetch masked party names (non-blocking — runs in background)
+        void (async () => {
+          try {
+            const stored = localStorage.getItem("supabase.auth.token");
+            const tok = stored ? (JSON.parse(stored) as { access_token?: string }).access_token ?? "" : "";
+            if (tok) {
+              const mRes = await fetch(`/api/masking/job-parties?job_reference=${encodeURIComponent(jobId)}`, {
+                headers: { Authorization: "Bearer " + tok },
+              });
+              if (mRes.ok && mountedRef.current) {
+                const mJson = await mRes.json() as typeof maskedParties;
+                setMaskedParties(mJson);
+              }
+            }
+          } catch { /* non-blocking, masking failure is silent */ }
+        })();
         void Promise.all([loadLogs(), loadSupplierLinks()]).finally(() => {
           if (mountedRef.current) setBgLoading(false);
         });
@@ -1042,7 +1062,12 @@ export default function ProviderJobDetailPage({
               <div className="flex items-start gap-4">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-purple-500/30 bg-purple-500/10 text-lg text-purple-400">◈</div>
                 <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-slate-100">{job.service_provider}</p>
+                  <p className="font-semibold text-slate-100">
+                    {maskedParties?.service_provider.display_name ?? job.service_provider}
+                    {maskedParties?.service_provider.is_masked && (
+                      <span className="ml-2 rounded-full bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 text-xs font-normal text-amber-400">masked</span>
+                    )}
+                  </p>
                   <p className="mt-1 text-xs text-slate-500">Executing party for this secured job</p>
                 </div>
               </div>
@@ -1052,7 +1077,12 @@ export default function ProviderJobDetailPage({
               <div className="flex items-start gap-4">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-500/10 text-lg text-emerald-400">◉</div>
                 <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-slate-100">{job.customer}</p>
+                  <p className="font-semibold text-slate-100">
+                    {maskedParties?.customer.display_name ?? job.customer}
+                    {maskedParties?.customer.is_masked && (
+                      <span className="ml-2 rounded-full bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 text-xs font-normal text-amber-400">masked</span>
+                    )}
+                  </p>
                   <p className="mt-1 text-xs text-slate-500">Paying party for this secured job</p>
                 </div>
               </div>

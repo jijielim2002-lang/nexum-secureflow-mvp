@@ -56,8 +56,10 @@ function CounterpartyMappingsInner() {
     relationship_type: "Service Provider",
     visibility_level:  "Masked",
   });
-  const [saving, setSaving] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
+  const [saving,        setSaving]        = useState(false);
+  const [formError,     setFormError]     = useState<string | null>(null);
+  const [autoGenerating, setAutoGenerating] = useState(false);
+  const [autoResult,    setAutoResult]    = useState<string | null>(null);
 
   // Edit modal
   const [editMapping, setEditMapping] = useState<Mapping | null>(null);
@@ -97,6 +99,26 @@ function CounterpartyMappingsInner() {
   }, []);
 
   useEffect(() => { void fetchData(); }, [fetchData]);
+
+  async function handleAutoGenerate() {
+    setAutoGenerating(true);
+    setAutoResult(null);
+    try {
+      const token = getToken();
+      const res   = await fetch("/api/admin/counterparty-mappings/auto-generate", {
+        method:  "POST",
+        headers: { Authorization: "Bearer " + token },
+      });
+      const json = await res.json() as { ok?: boolean; created?: number; message?: string; error?: string };
+      if (!json.ok) throw new Error(json.error ?? "Auto-generate failed");
+      setAutoResult(json.message ?? `Created ${json.created} mappings`);
+      await fetchData();
+    } catch (e) {
+      setAutoResult("Error: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setAutoGenerating(false);
+    }
+  }
 
   async function handleCreate() {
     if (!form.real_company_id || !form.owner_company_id || !form.masked_code.trim()) {
@@ -204,13 +226,34 @@ function CounterpartyMappingsInner() {
               Control what company name each party sees when viewing a job. Masked names protect commercial confidentiality.
             </p>
           </div>
-          <button
-            onClick={() => { setShowCreate(true); setFormError(null); }}
-            className="shrink-0 rounded-lg border border-purple-500/40 bg-purple-500/15 px-4 py-2 text-sm font-semibold text-purple-300 hover:bg-purple-500/25 transition-colors"
-          >
-            + New mapping
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => void handleAutoGenerate()}
+              disabled={autoGenerating}
+              className="shrink-0 rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-700 disabled:opacity-50 transition-colors"
+            >
+              {autoGenerating ? "Generating…" : "⚡ Auto-generate all"}
+            </button>
+            <button
+              onClick={() => { setShowCreate(true); setFormError(null); }}
+              className="shrink-0 rounded-lg border border-purple-500/40 bg-purple-500/15 px-4 py-2 text-sm font-semibold text-purple-300 hover:bg-purple-500/25 transition-colors"
+            >
+              + New mapping
+            </button>
+          </div>
         </div>
+
+        {/* Auto-generate result */}
+        {autoResult && (
+          <div className={`mb-4 rounded-xl border px-5 py-3 text-sm flex items-center justify-between ${
+            autoResult.startsWith("Error")
+              ? "border-red-500/30 bg-red-500/5 text-red-300"
+              : "border-emerald-500/30 bg-emerald-500/5 text-emerald-300"
+          }`}>
+            <span>{autoResult}</span>
+            <button onClick={() => setAutoResult(null)} className="ml-4 text-slate-500 hover:text-slate-300">✕</button>
+          </div>
+        )}
 
         {/* How it works */}
         <div className="mb-6 rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-xs text-slate-400 space-y-1">

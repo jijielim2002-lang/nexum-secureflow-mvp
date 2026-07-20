@@ -39,6 +39,7 @@ const OPERATIONS = [
 ];
 
 const SETTINGS = [
+  { label: "Platform Settings", href: "/admin/platform-settings" },
   { label: "Plans",           href: "/admin/membership-plans" },
   { label: "Pricing",         href: "/pricing" },
   { label: "Memberships",     href: "/admin/memberships" },
@@ -49,6 +50,8 @@ const SETTINGS = [
   { label: "Schema Health",   href: "/admin/schema-health" },
   { label: "Fee Rules",       href: "/admin/fee-rules" },
   { label: "Capital Partners",href: "/admin/capital-partners" },
+  { label: "Counterparty Masking", href: "/admin/counterparty-mappings" },
+  { label: "AI Extraction Review", href: "/admin/extraction-review" },
   { label: "Tasks",           href: "/admin/tasks" },
 ];
 

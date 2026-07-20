@@ -808,6 +808,12 @@ export default function AdminJobDetailPage({
           <span>/</span>
           <span className="font-mono text-slate-400">{job.job_reference}</span>
           <span className="ml-auto flex items-center gap-2">
+            <Link
+              href={`/admin/jobs/${job.job_reference}/fee-adjustments`}
+              className="rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-medium text-amber-300 hover:bg-amber-500/20 transition-colors"
+            >
+              Adjust Fee
+            </Link>
             {bgLoading && (
               <span className="flex items-center gap-1 text-slate-500">
                 <span className="h-2.5 w-2.5 animate-spin rounded-full border border-slate-500 border-t-transparent" />

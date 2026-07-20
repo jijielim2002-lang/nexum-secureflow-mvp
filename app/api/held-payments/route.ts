@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getCaller } from "@/lib/api-auth";
 
 const svc = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -13,6 +14,9 @@ const svc = createClient(
 // ─── GET ──────────────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
+  const caller = await getCaller(req);
+  if (!caller) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const jobReference = req.nextUrl.searchParams.get("jobReference");
   if (!jobReference) {
     return NextResponse.json({ error: "jobReference required" }, { status: 400 });
@@ -44,6 +48,9 @@ interface CreateBody {
 }
 
 export async function POST(req: NextRequest) {
+  const caller = await getCaller(req);
+  if (!caller) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   let body: CreateBody;
   try { body = (await req.json()) as CreateBody; }
   catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }

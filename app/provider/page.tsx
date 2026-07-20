@@ -119,9 +119,10 @@ export default function ProviderDashboard() {
             </span>
             <Link href="/provider/quotations"         className="hover:text-slate-100 transition-colors">Quotations</Link>
             <Link href="/provider/jobs"               className="hover:text-slate-100 transition-colors">My Jobs</Link>
-            <Link href="/provider/customer-insights"  className="hover:text-slate-100 transition-colors">Customer Insights</Link>
-            <Link href="/provider/membership" className="hover:text-slate-100 transition-colors">Membership</Link>
-            <Link href="/provider/payout-profile" className="hover:text-slate-100 transition-colors">Payout Profile</Link>
+            <Link href="/provider/operations"         className="hover:text-slate-100 transition-colors">Operations</Link>
+            <Link href="/provider/finance"            className="hover:text-slate-100 transition-colors">Finance</Link>
+            <Link href="/provider/team"               className="hover:text-slate-100 transition-colors">Team</Link>
+            <Link href="/provider/customer-insights"  className="hover:text-slate-100 transition-colors">Insights</Link>
             <Link href="/provider/notifications" className="hover:text-slate-100 transition-colors">Notifications</Link>
             <NotificationBell />
             <LogoutButton />

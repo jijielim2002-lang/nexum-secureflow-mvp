@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
   // Fetch minimum profile — only the columns guaranteed to exist in production
   const { data, error } = await admin
     .from("profiles")
-    .select("id, email, role, company_id")
+    .select("id, email, role, company_id, nexum_role")
     .eq("id", user.id)
     .maybeSingle();
 
@@ -65,6 +65,9 @@ export async function GET(req: NextRequest) {
       email:      (data.email as string | null) ?? user.email ?? "",
       role:       data.role as string,
       company_id: (data.company_id as string | null) ?? null,
+      nexum_role: (data.nexum_role as string | null) ?? null,
     },
+    // Also expose nexum_role at top level for convenience (used by platform-settings etc.)
+    nexum_role: (data.nexum_role as string | null) ?? null,
   });
 }

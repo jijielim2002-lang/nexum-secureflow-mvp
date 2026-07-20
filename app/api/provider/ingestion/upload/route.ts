@@ -21,7 +21,12 @@ async function verifyToken(req: NextRequest) {
   if (!token) return null;
   const admin = adminClient();
   const { data: { user } } = await admin.auth.getUser(token);
-  return user ?? null;
+  if (!user) return null;
+  // Role check: only service_provider or admin may use ingestion routes
+  const { data: profile } = await admin
+    .from("profiles").select("role").eq("id", user.id).maybeSingle();
+  if (!profile || !["service_provider", "admin"].includes(profile.role as string)) return null;
+  return user;
 }
 
 // ── POST — create signed upload URL ──────────────────────────────────────────

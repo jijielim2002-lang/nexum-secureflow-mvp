@@ -1,12 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getCaller } from "@/lib/api-auth";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
 
+// ─── Auth check ───────────────────────────────────────────────────────────────
+// Accepts either:
+//   1. A valid Bearer <access_token> (user-initiated action)
+//   2. x-internal-key header matching INTERNAL_API_KEY env var (server-to-server)
+async function isAuthorized(req: NextRequest): Promise<boolean> {
+  // Internal API key (server-to-server calls from other API routes)
+  const internalKey = req.headers.get("x-internal-key");
+  if (internalKey && internalKey === process.env.INTERNAL_API_KEY) return true;
+
+  // User Bearer token
+  const caller = await getCaller(req);
+  return caller !== null;
+}
+
 export async function POST(req: NextRequest) {
+  if (!(await isAuthorized(req))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const body = await req.json() as {
       jobReference?:        string | null;

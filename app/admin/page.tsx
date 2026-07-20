@@ -92,6 +92,20 @@ const ROLE_COLOR: Record<string, string> = {
 
 export default function AdminDashboard() {
   const { profile, isBypass } = useAuth();
+  const [nexumRole, setNexumRole] = useState<string | null>(null);
+
+  // Fetch nexum_role from server-side profile
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("supabase.auth.token");
+      const token  = stored ? ((JSON.parse(stored) as { access_token?: string }).access_token ?? "") : "";
+      if (!token) return;
+      fetch("/api/auth/profile", { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json())
+        .then((j: { nexum_role?: string }) => setNexumRole(j.nexum_role ?? null))
+        .catch(() => {});
+    } catch { /* ignore */ }
+  }, []);
 
   // ── Jobs (drives stats + recent jobs table) ────────────────────────────────
   const [jobStatus, setJobStatus] = useState<SectionStatus>("loading");
@@ -270,8 +284,21 @@ export default function AdminDashboard() {
         </div>
 
         {/* ── Header ─────────────────────────────────────────────────────────── */}
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold text-slate-50">Admin Control Tower</h1>
+        <div className="mb-6">
+          <div className="flex items-center gap-3 mb-1">
+            <h1 className="text-2xl font-bold text-slate-50">Admin Control Tower</h1>
+            {nexumRole && (
+              <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold border ${
+                nexumRole === "super_admin"    ? "bg-red-500/15 text-red-300 border-red-500/30"      :
+                nexumRole === "admin"          ? "bg-blue-500/15 text-blue-300 border-blue-500/30"   :
+                nexumRole === "operations"     ? "bg-teal-500/15 text-teal-300 border-teal-500/30"   :
+                nexumRole === "finance_reviewer" ? "bg-indigo-500/15 text-indigo-300 border-indigo-500/30" :
+                "bg-zinc-700 text-zinc-400"
+              }`}>
+                {nexumRole.replace("_", " ")}
+              </span>
+            )}
+          </div>
           <p className="mt-1 text-sm text-slate-400">
             {profile?.full_name && `${profile.full_name} · `}
             {jobsLoading
@@ -281,6 +308,73 @@ export default function AdminDashboard() {
                 : "Platform data unavailable"}
           </p>
         </div>
+
+        {/* ── Role-aware quick actions ───────────────────────────────────────── */}
+        {nexumRole && (
+          <div className="mb-8 bg-slate-900 border border-slate-800 rounded-xl p-5">
+            <p className="text-xs text-slate-500 mb-3 font-medium uppercase tracking-wide">
+              Quick Access — {nexumRole === "super_admin" ? "Super Admin" : nexumRole === "admin" ? "Admin" : nexumRole === "operations" ? "Operations" : nexumRole === "finance_reviewer" ? "Finance Reviewer" : "Viewer"}
+            </p>
+            <div className="flex flex-wrap gap-3">
+              {/* Super Admin only */}
+              {(nexumRole === "super_admin") && (
+                <>
+                  <Link href="/admin/platform-settings" className="text-xs bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-300 px-3 py-2 rounded-lg transition">
+                    ⚙️ Platform Settings
+                  </Link>
+                  <Link href="/admin/fee-rules" className="text-xs bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-300 px-3 py-2 rounded-lg transition">
+                    💰 Fee Rules
+                  </Link>
+                </>
+              )}
+              {/* Admin + Super Admin */}
+              {(nexumRole === "super_admin" || nexumRole === "admin") && (
+                <>
+                  <Link href="/admin/companies" className="text-xs bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-blue-300 px-3 py-2 rounded-lg transition">
+                    🏢 Companies
+                  </Link>
+                  <Link href="/admin/users" className="text-xs bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-blue-300 px-3 py-2 rounded-lg transition">
+                    👥 Users
+                  </Link>
+                  <Link href="/admin/extraction-review" className="text-xs bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-blue-300 px-3 py-2 rounded-lg transition">
+                    🧠 AI Review
+                  </Link>
+                  <Link href="/admin/counterparty-mappings" className="text-xs bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-blue-300 px-3 py-2 rounded-lg transition">
+                    🔒 Masking
+                  </Link>
+                </>
+              )}
+              {/* Operations */}
+              {(nexumRole === "super_admin" || nexumRole === "admin" || nexumRole === "operations") && (
+                <>
+                  <Link href="/admin/jobs" className="text-xs bg-teal-500/10 hover:bg-teal-500/20 border border-teal-500/20 text-teal-300 px-3 py-2 rounded-lg transition">
+                    📦 Jobs
+                  </Link>
+                  <Link href="/admin/delivery-confirmations" className="text-xs bg-teal-500/10 hover:bg-teal-500/20 border border-teal-500/20 text-teal-300 px-3 py-2 rounded-lg transition">
+                    ✅ Deliveries
+                  </Link>
+                  <Link href="/admin/exceptions" className="text-xs bg-teal-500/10 hover:bg-teal-500/20 border border-teal-500/20 text-teal-300 px-3 py-2 rounded-lg transition">
+                    ⚠️ Exceptions
+                  </Link>
+                </>
+              )}
+              {/* Finance Reviewer */}
+              {(nexumRole === "super_admin" || nexumRole === "admin" || nexumRole === "finance_reviewer") && (
+                <>
+                  <Link href="/admin/payment-operations" className="text-xs bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 text-indigo-300 px-3 py-2 rounded-lg transition">
+                    💳 Payments
+                  </Link>
+                  <Link href="/admin/capital-readiness" className="text-xs bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 text-indigo-300 px-3 py-2 rounded-lg transition">
+                    📊 Financeability
+                  </Link>
+                  <Link href="/admin/accounting-exports" className="text-xs bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 text-indigo-300 px-3 py-2 rounded-lg transition">
+                    📤 Exports
+                  </Link>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* ── Core-mode fallback banner ───────────────────────────────────────── */}
         {coreMode && jobStatus !== "ok" && (

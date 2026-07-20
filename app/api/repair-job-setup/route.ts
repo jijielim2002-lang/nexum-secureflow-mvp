@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { buildSnapshot } from "@/lib/jobTermsSnapshot";
+import { getCaller } from "@/lib/api-auth";
 
 // ─── Service-role client ──────────────────────────────────────────────────────
 // Created lazily so a missing env var doesn't crash the module before we can
@@ -66,6 +67,12 @@ interface StepError {
 // ─── POST /api/repair-job-setup ───────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  const caller = await getCaller(req);
+  if (!caller) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!caller.role || !["admin", "service_provider"].includes(caller.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   // ── OUTER CATCH-ALL: guarantees we always return JSON, never HTML 500 ──────
   try {
     return await runRepair(req);
@@ -548,6 +555,9 @@ async function runRepair(req: NextRequest): Promise<NextResponse> {
 // Returns a read-only checklist of which setup records exist.
 
 export async function GET(req: NextRequest) {
+  const callerGet = await getCaller(req);
+  if (!callerGet) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   try {
     const job_reference = req.nextUrl.searchParams.get("job_reference");
     if (!job_reference) {

@@ -13,8 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getCaller } from "@/lib/api-auth";
-import { adminClient } from "@/lib/api-auth";
+import { getCaller, adminClient } from "@/lib/api-auth";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -338,3 +337,4 @@ export async function DELETE(req: NextRequest) {
 
   return NextResponse.json({ success: true });
 }
+                                 

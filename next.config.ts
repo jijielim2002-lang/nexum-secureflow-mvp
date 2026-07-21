@@ -6,6 +6,9 @@ const nextConfig: NextConfig = {
   // Remove this once all API route types are cleaned up.
   typescript: { ignoreBuildErrors: true },
 
+  // Skip ESLint during builds — lint is run in CI/pre-commit, not during Vercel deploy.
+  eslint: { ignoreDuringBuilds: true },
+
   // Required for Docker/VPS deployment — produces .next/standalone with node server.js
   output: process.env.DOCKER_BUILD === "true" ? "standalone" : undefined,
 
@@ -30,12 +33,4 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       {
         protocol: "https",
-        hostname: "*.supabase.co",
-        port: "",
-        pathname: "/storage/v1/object/public/**",
-      },
-    ],
-  },
-};
-
-export default nextConfig;
+        hostname: "*.su

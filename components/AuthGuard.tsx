@@ -162,3 +162,5 @@ export function AuthGuard({
   // 6 — Authorized
   return <>{children}</>;
 }
+
+export default AuthGuard;

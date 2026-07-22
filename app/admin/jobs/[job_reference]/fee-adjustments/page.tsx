@@ -9,6 +9,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabaseClient";
 import AuthGuard from "@/components/AuthGuard";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -99,6 +100,10 @@ function FeeAdjustmentsContent() {
   const [error, setError]             = useState<string | null>(null);
   const [nexumRole, setNexumRole]     = useState<string | null>(null);
 
+  // Job info for pre-populating form
+  const [jobCurrency, setJobCurrency] = useState("MYR");
+  const [jobFeeAmounts, setJobFeeAmounts] = useState<Record<string, number | null>>({});
+
   // Modal states
   const [showCreate, setShowCreate]   = useState(false);
   const [actionModal, setActionModal] = useState<{
@@ -114,6 +119,7 @@ function FeeAdjustmentsContent() {
     fee_type: FEE_TYPES[0],
     old_amount: "",
     new_amount: "",
+    currency: "MYR",
     reason: "",
     internal_notes: "",
     customer_reacceptance_required: false,
@@ -162,6 +168,32 @@ function FeeAdjustmentsContent() {
       .catch(() => {});
   }, []);
 
+  // Fetch job info to pre-populate currency + fee amounts
+  useEffect(() => {
+    if (!jobRef) return;
+    supabase
+      .from("secured_jobs")
+      .select("currency, logistics_fee_amount, duty_tax_estimate_amount, insurance_cost_amount, additional_charges_amount, job_value")
+      .eq("job_reference", jobRef)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!data || !mountedRef.current) return;
+        const currency = (data.currency as string) || "MYR";
+        setJobCurrency(currency);
+        setJobFeeAmounts({
+          "Provider Logistics Fee": data.logistics_fee_amount as number | null,
+          "Duty Tax":               data.duty_tax_estimate_amount as number | null,
+          "Insurance":              data.insurance_cost_amount as number | null,
+          "Additional Charges":     data.additional_charges_amount as number | null,
+        });
+        setForm(f => ({
+          ...f,
+          currency,
+          old_amount: String(data.logistics_fee_amount ?? ""),
+        }));
+      });
+  }, [jobRef]);
+
   useEffect(() => { void fetchAdjustments(); }, [fetchAdjustments]);
 
   async function handleCreate(e: React.FormEvent) {
@@ -180,6 +212,7 @@ function FeeAdjustmentsContent() {
           fee_type:      form.fee_type,
           old_amount:    parseFloat(form.old_amount),
           new_amount:    parseFloat(form.new_amount),
+          currency:      form.currency || jobCurrency,
           reason:        form.reason.trim(),
           internal_notes: form.internal_notes.trim() || null,
           customer_reacceptance_required: form.customer_reacceptance_required,
@@ -189,7 +222,8 @@ function FeeAdjustmentsContent() {
       const json = await res.json() as { error?: string };
       if (!res.ok) { setCreateError(json.error ?? "Failed"); setCreateLoading(false); return; }
       setShowCreate(false);
-      setForm({ fee_type: FEE_TYPES[0], old_amount: "", new_amount: "", reason: "", internal_notes: "", customer_reacceptance_required: false, submit_for_approval: false });
+      const defaultAmt = jobFeeAmounts[FEE_TYPES[0]];
+      setForm({ fee_type: FEE_TYPES[0], old_amount: defaultAmt != null ? String(defaultAmt) : "", new_amount: "", currency: jobCurrency, reason: "", internal_notes: "", customer_reacceptance_required: false, submit_for_approval: false });
       await fetchAdjustments();
     } catch (err) {
       setCreateError(String(err));
@@ -378,7 +412,11 @@ function FeeAdjustmentsContent() {
                 <label className="block text-xs text-zinc-400 mb-1">Fee Type</label>
                 <select
                   value={form.fee_type}
-                  onChange={e => setForm(f => ({ ...f, fee_type: e.target.value }))}
+                  onChange={e => {
+                    const ft = e.target.value;
+                    const amt = jobFeeAmounts[ft];
+                    setForm(f => ({ ...f, fee_type: ft, old_amount: amt != null ? String(amt) : "" }));
+                  }}
                   className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500"
                 >
                   {FEE_TYPES.map(t => <option key={t}>{t}</option>)}

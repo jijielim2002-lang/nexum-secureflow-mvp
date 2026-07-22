@@ -425,7 +425,7 @@ function FeeAdjustmentsContent() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-zinc-400 mb-1">Old Amount (MYR)</label>
+                  <label className="block text-xs text-zinc-400 mb-1">Old Amount ({jobCurrency})</label>
                   <input
                     type="number" step="0.01" min="0" required
                     value={form.old_amount}
@@ -435,7 +435,7 @@ function FeeAdjustmentsContent() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-zinc-400 mb-1">New Amount (MYR)</label>
+                  <label className="block text-xs text-zinc-400 mb-1">New Amount ({jobCurrency})</label>
                   <input
                     type="number" step="0.01" min="0" required
                     value={form.new_amount}
@@ -452,7 +452,7 @@ function FeeAdjustmentsContent() {
                   <DirectionBadge
                     direction={parseFloat(form.new_amount) > parseFloat(form.old_amount) ? "Increase" : parseFloat(form.new_amount) < parseFloat(form.old_amount) ? "Decrease" : "Correction"}
                     amount={Math.abs(parseFloat(form.new_amount) - parseFloat(form.old_amount))}
-                    currency="MYR"
+                    currency={jobCurrency}
                   />
                 </div>
               )}
@@ -540,7 +540,7 @@ function FeeAdjustmentsContent() {
             <div className="bg-zinc-800 rounded-lg p-3 mb-4 text-sm">
               <p className="text-zinc-200">{actionModal.adj.fee_type}</p>
               <p className="text-zinc-400 mt-1">
-                MYR {actionModal.adj.old_amount.toFixed(2)} → MYR {actionModal.adj.new_amount.toFixed(2)}
+                {actionModal.adj.currency} {actionModal.adj.old_amount.toFixed(2)} → {actionModal.adj.currency} {actionModal.adj.new_amount.toFixed(2)}
                 {" "}
                 <DirectionBadge direction={actionModal.adj.adjustment_direction} amount={actionModal.adj.adjustment_amount} currency={actionModal.adj.currency} />
               </p>

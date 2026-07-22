@@ -179,9 +179,12 @@ function FeeAdjustmentsContent() {
       .then(({ data }) => {
         if (!data || !mountedRef.current) return;
         const currency = (data.currency as string) || "MYR";
+        // logistics_fee_amount holds Nexum's platform cut; job_value is the provider's logistics fee
+        const logisticsFee = (data.logistics_fee_amount as number | null) || (data.job_value as number | null);
         setJobCurrency(currency);
         setJobFeeAmounts({
-          "Provider Logistics Fee": data.logistics_fee_amount as number | null,
+          "Provider Logistics Fee": logisticsFee,
+          "Nexum Platform Fee":     data.logistics_fee_amount as number | null,
           "Duty Tax":               data.duty_tax_estimate_amount as number | null,
           "Insurance":              data.insurance_cost_amount as number | null,
           "Additional Charges":     data.additional_charges_amount as number | null,
@@ -189,7 +192,7 @@ function FeeAdjustmentsContent() {
         setForm(f => ({
           ...f,
           currency,
-          old_amount: String(data.logistics_fee_amount ?? ""),
+          old_amount: logisticsFee != null ? String(logisticsFee) : "",
         }));
       });
   }, [jobRef]);

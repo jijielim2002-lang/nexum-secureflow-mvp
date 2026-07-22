@@ -140,7 +140,7 @@ export async function POST(req: NextRequest) {
   // Verify job exists
   const { data: job } = await db
     .from("secured_jobs")
-    .select("job_reference, status")
+    .select("job_reference, job_status")
     .eq("job_reference", job_reference)
     .maybeSingle();
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
@@ -176,7 +176,7 @@ export async function POST(req: NextRequest) {
       adjustment_status:             initialStatus,
       requires_approval:             requiresApproval,
       customer_reacceptance_required,
-      job_stage_at_adjustment:       job_stage_at_adjustment ?? (job.status as string),
+      job_stage_at_adjustment:       job_stage_at_adjustment ?? (job.job_status as string),
       requested_by:                  caller!.userId,
     })
     .select()

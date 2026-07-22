@@ -173,21 +173,25 @@ function FeeAdjustmentsContent() {
     if (!jobRef) return;
     supabase
       .from("secured_jobs")
-      .select("currency, logistics_fee_amount, duty_tax_estimate_amount, insurance_cost_amount, additional_charges_amount, job_value")
+      .select("currency, logistics_fee_amount, duty_tax_estimate_amount, insurance_cost_amount, additional_charges_amount, job_value, total_secured_amount")
       .eq("job_reference", jobRef)
       .maybeSingle()
       .then(({ data }) => {
         if (!data || !mountedRef.current) return;
         const currency = (data.currency as string) || "MYR";
-        // logistics_fee_amount holds Nexum's platform cut; job_value is the provider's logistics fee
-        const logisticsFee = (data.logistics_fee_amount as number | null) || (data.job_value as number | null);
+        const n = (v: unknown) => (typeof v === "number" && v > 0 ? v : null);
+        // Use first non-zero value as the provider logistics fee
+        const logisticsFee =
+          n(data.logistics_fee_amount) ??
+          n(data.total_secured_amount) ??
+          n(data.job_value);
         setJobCurrency(currency);
         setJobFeeAmounts({
           "Provider Logistics Fee": logisticsFee,
-          "Nexum Platform Fee":     data.logistics_fee_amount as number | null,
-          "Duty Tax":               data.duty_tax_estimate_amount as number | null,
-          "Insurance":              data.insurance_cost_amount as number | null,
-          "Additional Charges":     data.additional_charges_amount as number | null,
+          "Nexum Platform Fee":     n(data.logistics_fee_amount),
+          "Duty Tax":               n(data.duty_tax_estimate_amount),
+          "Insurance":              n(data.insurance_cost_amount),
+          "Additional Charges":     n(data.additional_charges_amount),
         });
         setForm(f => ({
           ...f,

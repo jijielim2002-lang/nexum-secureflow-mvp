@@ -6,6 +6,7 @@
  */
 
 import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 import AuthGuard from "@/components/AuthGuard";
 
 interface Setting {
@@ -196,6 +197,9 @@ function PlatformSettingsContent() {
 
         {/* Header */}
         <div className="mb-8">
+          <Link href="/admin" className="inline-flex items-center gap-1 text-sm text-zinc-400 hover:text-white mb-3 transition-colors">
+            ← Back to Dashboard
+          </Link>
           <h1 className="text-2xl font-bold">Platform Settings</h1>
           <p className="text-zinc-400 text-sm mt-1">
             Configure platform-wide thresholds, feature flags, and live mode gates.

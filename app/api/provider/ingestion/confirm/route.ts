@@ -92,37 +92,32 @@ export async function POST(req: NextRequest) {
   const jobValue = parseFloat(String(job_data.job_value ?? "0")) || 0;
   const confidenceScore = batch.confidence_score ?? null;
 
+  // Only insert columns that exist in secured_jobs (see live_baseline schema).
+  // Columns NOT in the table: title, created_from_documents, source_ingestion_batch_id,
+  // extraction_confidence_score, extraction_review_status, provider_confirmed_*, provider_customer_id.
+  // job_status CHECK constraint values must match exactly.
   const jobInsert: Record<string, unknown> = {
     job_reference,
-    title: job_data.title || `Job from ${batch.batch_reference}`,
-    service_type: job_data.service_type ?? null,
-    route: job_data.route ?? null,
+    service_type:      job_data.service_type      ?? null,
+    route:             job_data.route              ?? null,
     cargo_description: job_data.cargo_description ?? null,
-    currency: job_data.currency ?? "MYR",
-    job_value: jobValue,
-    payment_terms: job_data.payment_terms ?? null,
-    job_status: "Pending Customer Acceptance",
-    created_from_documents: true,
-    source_ingestion_batch_id: batch_id,
-    extraction_confidence_score: confidenceScore,
-    extraction_review_status: confidenceScore !== null && confidenceScore < 70
-      ? "Review Required"
-      : "Pending Review",
-    provider_confirmed_extraction_at: now,
-    provider_confirmed_extraction_by: user.id,
-    created_at: now,
-    updated_at: now,
+    incoterm:          job_data.incoterm           ?? null,
+    hs_code:           job_data.hs_code            ?? null,
+    currency:          job_data.currency           ?? "RM",
+    job_value:         jobValue,
+    payment_terms:     job_data.payment_terms      ?? null,
+    // "Awaiting Customer Acceptance" matches the CHECK constraint in secured_jobs
+    job_status:        "Awaiting Customer Acceptance",
+    created_at:        now,
   };
 
   if (batch.provider_company_id) {
     jobInsert.service_provider_company_id = batch.provider_company_id;
   }
 
-  // Include customer info if columns exist (non-breaking)
-  if (job_data.customer_name)        jobInsert.customer_name        = job_data.customer_name;
-  if (job_data.customer_email)       jobInsert.customer_email       = job_data.customer_email;
-  // customer_company is not a column on secured_jobs — stored in provider_customers table
-  if (job_data.provider_customer_id) jobInsert.provider_customer_id = job_data.provider_customer_id;
+  // Map extracted customer fields to actual column names
+  if (job_data.customer_name)  jobInsert.customer       = job_data.customer_name;
+  if (job_data.customer_email) jobInsert.customer_email = job_data.customer_email;
 
   const { error: jobErr } = await admin
     .from("secured_jobs")

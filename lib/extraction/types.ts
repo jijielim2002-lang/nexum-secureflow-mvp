@@ -16,6 +16,7 @@ export type DocumentType =
 export type ExtractionProvider =
   | "pdf_text"
   | "ocr"
+  | "vision"
   | "template"
   | "openai"
   | "anthropic"

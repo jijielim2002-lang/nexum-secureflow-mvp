@@ -15,6 +15,7 @@ import { detectDocumentType }  from "./doc-detector";
 import { templateExtract }     from "./template";
 import {
   extractWithOpenAIText,
+  extractWithOpenAIVisionPDF,
   extractWithAnthropicText,
 } from "./llm-client";
 import type {
@@ -114,21 +115,53 @@ export async function runExtractionEngine(
     });
   }
 
-  // ── Stage 2: OCR (not available in v1 — flagged for future) ─────────────────
+  // ── Stage 2: Vision extraction for scanned PDFs (GPT-4o Responses API) ───────
   const textUsable = rawText.length >= 150;
-  if (!textUsable && process.env.ENABLE_LOCAL_OCR === "true") {
-    stages.push({
-      stage:    "ocr",
-      label:    "OCR",
-      status:   "unavailable",
-      cost_usd: 0,
-      reason:   "Local OCR not configured — will use LLM fallback",
-    });
-  }
 
-  // ── Stage 3: Document type detection ────────────────────────────────────────
+  // Detect doc type now so vision knows what schema to use
   const detected = detectDocumentType(rawText, opts.userDocType);
   const docType: DocumentType = detected.type;
+
+  const ENABLE_VISION = ENABLE_LLM && process.env.OPENAI_API_KEY;
+  if (isPDF && !textUsable && ENABLE_VISION) {
+    // Scanned PDF — try to read it visually with GPT-4o
+    try {
+      const visionBuffer = opts.fileBuffer ??
+        await fetch(opts.signedUrl).then(r => r.arrayBuffer()).then(a => Buffer.from(a));
+
+      const visionResult = await extractWithOpenAIVisionPDF(visionBuffer, docType);
+      fields      = mergeFields(fields, visionResult.fields);
+      totalCost  += visionResult.cost_usd;
+      llmUsed     = true;
+
+      stages.push({
+        stage:         "vision",
+        label:         "Vision extraction (GPT-4o)",
+        status:        visionResult.confidence >= 20 ? "success" : "failed",
+        confidence:    visionResult.confidence,
+        cost_usd:      visionResult.cost_usd,
+        input_tokens:  visionResult.input_tokens,
+        output_tokens: visionResult.output_tokens,
+        reason:        "Scanned PDF — GPT-4o direct visual read",
+      });
+    } catch (err) {
+      stages.push({
+        stage:    "vision",
+        label:    "Vision extraction (GPT-4o)",
+        status:   "failed",
+        cost_usd: 0,
+        reason:   String(err),
+      });
+    }
+  } else if (isPDF && !textUsable) {
+    stages.push({
+      stage:    "vision",
+      label:    "Vision extraction (GPT-4o)",
+      status:   "unavailable",
+      cost_usd: 0,
+      reason:   "OPENAI_API_KEY not configured",
+    });
+  }
 
   // ── Stage 4: Template / Regex Extraction (free) ──────────────────────────────
   let templateConfidence = 0;
@@ -156,7 +189,8 @@ export async function runExtractionEngine(
   }
 
   // ── Stage 5: LLM Fallback ────────────────────────────────────────────────────
-  const needsLLM = ENABLE_LLM && (
+  // Skip if vision already extracted (llmUsed=true from scanned PDF vision stage)
+  const needsLLM = ENABLE_LLM && !llmUsed && (
     opts.forceAI ||
     !textUsable ||
     templateConfidence < LLM_CONFIDENCE_THRESHOLD

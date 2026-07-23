@@ -211,6 +211,89 @@ export async function extractWithOpenAIText(
   };
 }
 
+// ─── OpenAI vision extraction for scanned PDFs (gpt-4o via Responses API) ────
+// Used when local text extraction yields nothing (scanned / image PDFs).
+// Sends the raw PDF bytes to GPT-4o which reads the document visually.
+// Cost: ~$0.01–0.05 per doc vs $0.001 for text — but only called for scans.
+
+export async function extractWithOpenAIVisionPDF(
+  buffer: Buffer,
+  documentType: DocumentType,
+): Promise<LLMExtractionResult> {
+  const schema    = buildPrompt(documentType);
+  const base64    = buffer.toString("base64");
+  const model     = "gpt-4o";
+
+  const res = await fetch("https://api.openai.com/v1/responses", {
+    method:  "POST",
+    headers: {
+      "Content-Type":  "application/json",
+      "Authorization": "Bearer " + process.env.OPENAI_API_KEY,
+    },
+    body: JSON.stringify({
+      model,
+      input: [
+        {
+          role: "user",
+          content: [
+            {
+              type:      "input_file",
+              filename:  "document.pdf",
+              file_data: `data:application/pdf;base64,${base64}`,
+            },
+            {
+              type: "input_text",
+              text: `You are a trade document extraction expert.
+Document type: ${documentType}
+
+Extract these fields and return ONLY valid JSON matching the schema. No explanation, no markdown fences.
+If a field is not found, use null. Set confidence_score (0-100) based on extraction quality.
+
+Schema:
+${schema}`,
+            },
+          ],
+        },
+      ],
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`OpenAI Vision API error ${res.status}: ${errText.slice(0, 200)}`);
+  }
+
+  const json = await res.json();
+  // Responses API: output[0].content[0].text
+  const rawContent: string =
+    json?.output?.[0]?.content?.[0]?.text ??
+    json?.output?.[0]?.content ?? "{}";
+  const cleaned = typeof rawContent === "string"
+    ? rawContent.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim()
+    : "{}";
+
+  let fields: ExtractedFields = {};
+  try { fields = JSON.parse(cleaned); } catch { fields = { raw_response: rawContent }; }
+
+  const inputTokens  = json?.usage?.input_tokens  ?? 0;
+  const outputTokens = json?.usage?.output_tokens ?? 0;
+  const cost_usd     = estimateCost("gpt-4o", inputTokens, outputTokens);
+
+  const confidence = typeof fields.confidence_score === "number"
+    ? fields.confidence_score
+    : parseFloat(String(fields.confidence_score ?? "0")) || 0;
+
+  return {
+    fields,
+    confidence,
+    input_tokens:  inputTokens,
+    output_tokens: outputTokens,
+    cost_usd,
+    model,
+    provider: "openai",
+  };
+}
+
 // ─── Anthropic text extraction (claude-3-5-haiku — for secondary/critical) ────
 
 export async function extractWithAnthropicText(

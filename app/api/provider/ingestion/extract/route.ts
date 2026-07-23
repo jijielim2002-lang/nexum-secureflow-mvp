@@ -10,6 +10,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+// Allow up to 60 s on Vercel Pro / 10 s on Hobby (PDF download + LLM takes ~15–30 s)
+export const maxDuration = 60;
+
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
@@ -358,7 +361,7 @@ If a field cannot be found, use null. confidence_score should reflect overall ex
         ...(isPDF ? { "anthropic-beta": "pdfs-2024-09-25" } : {}),
       },
       body: JSON.stringify({
-        model:      "claude-haiku-4-5-20251001",
+        model:      "claude-3-5-haiku-20241022",
         max_tokens: 2000,
         system:     systemPrompt,
         messages: [
@@ -405,7 +408,7 @@ If a field cannot be found, use null. confidence_score should reflect overall ex
     ? parsed.confidence_score
     : parseFloat(String(parsed.confidence_score ?? "0")) || 0;
 
-  return { data: parsed, confidence, model: "claude-haiku-4-5-20251001", durationMs };
+  return { data: parsed, confidence, model: "claude-3-5-haiku-20241022", durationMs };
 }
 
 // ── Field comparison ──────────────────────────────────────────────────────────
@@ -624,7 +627,7 @@ export async function POST(req: NextRequest) {
           await admin.from("document_extraction_runs").insert({
             file_id,
             provider:  "Anthropic",
-            model:     "claude-haiku-4-5-20251001",
+            model:     "claude-3-5-haiku-20241022",
             status:    "Failed",
             error_message: msg,
           });
@@ -718,7 +721,7 @@ export async function POST(req: NextRequest) {
         confidence_score:    avgConfidence,
         ingestion_status:    newBatchStatus,
         extraction_provider: ENABLE_DUAL_LLM ? "OpenAI + Anthropic" : "OpenAI",
-        extraction_model:    ENABLE_DUAL_LLM ? "gpt-4o + claude-haiku-4-5-20251001" : "gpt-4o",
+        extraction_model:    ENABLE_DUAL_LLM ? "gpt-4o + claude-3-5-haiku-20241022" : "gpt-4o",
         updated_at:          new Date().toISOString(),
       })
       .eq("id", batch_id);

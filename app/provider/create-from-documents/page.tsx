@@ -76,46 +76,108 @@ interface FieldValues {
 
 // ── Provider type definitions ─────────────────────────────────────────────────
 
-const SEAFREIGHT_DOCS = [
-  { docType: "Commercial Invoice", required: true },
-  { docType: "Packing List", required: true },
-  { docType: "Custom Form", required: true },
-  { docType: "POD", required: true },
-  { docType: "Bill of Lading", required: true },
-  { docType: "Billing Invoice from Provider", required: true },
-];
-
-const AIRFREIGHT_DOCS = [
-  { docType: "Commercial Invoice", required: true },
-  { docType: "Packing List", required: true },
-  { docType: "Custom Form", required: true },
-  { docType: "POD", required: true },
-  { docType: "Airwaybill", required: true },
-  { docType: "Billing Invoice from Provider", required: true },
-];
-
-const LOCAL_TRANSPORT_DOCS = [
-  { docType: "Billing Invoice from Provider", required: true },
-];
-
-const CUSTOMS_BROKER_DOCS = [
-  { docType: "Billing Invoice from Provider", required: true },
-];
-
-const CROSS_BORDER_DOCS = [
-  { docType: "Billing Invoice from Provider", required: true },
-];
-
-const DOCS_MAP: Record<ProviderType, { docType: string; required: boolean }[]> = {
-  "Seafreight":             SEAFREIGHT_DOCS,
-  "Airfreight":             AIRFREIGHT_DOCS,
-  "Local Transport":        LOCAL_TRANSPORT_DOCS,
-  "Customs Broker":         CUSTOMS_BROKER_DOCS,
-  "Cross Border Transport": CROSS_BORDER_DOCS,
+// Static doc lists shown on service type cards (before direction is known)
+const CARD_DOCS: Record<ProviderType, { docType: string; required: boolean }[]> = {
+  "Seafreight": [
+    { docType: "Commercial Invoice", required: true },
+    { docType: "Packing List", required: true },
+    { docType: "Kastam Form/Permit (Export or Import)", required: true },
+    { docType: "Proof of Delivery", required: true },
+    { docType: "Bill of Lading", required: true },
+    { docType: "Billing Invoice from Provider", required: true },
+  ],
+  "Airfreight": [
+    { docType: "Commercial Invoice", required: true },
+    { docType: "Packing List", required: true },
+    { docType: "Kastam Form/Permit (Export or Import)", required: true },
+    { docType: "Proof of Delivery", required: true },
+    { docType: "Airwaybill", required: true },
+    { docType: "Billing Invoice from Provider", required: true },
+  ],
+  "Local Transport": [
+    { docType: "Billing Invoice from Provider", required: true },
+    { docType: "Commercial Invoice", required: true },
+    { docType: "Packing List", required: true },
+    { docType: "Cargo Photos", required: true },
+    { docType: "Proof of Delivery", required: true },
+  ],
+  "Customs Broker": [
+    { docType: "Billing Invoice from Provider", required: true },
+    { docType: "Commercial Invoice", required: true },
+    { docType: "Packing List", required: true },
+    { docType: "Permit", required: false },
+  ],
+  "Cross Border Transport": [
+    { docType: "Billing Invoice from Provider", required: true },
+    { docType: "Kastam Form/Permit (Export or Import)", required: true },
+    { docType: "Commercial Invoice", required: true },
+    { docType: "Packing List", required: true },
+    { docType: "Cargo Photos", required: true },
+    { docType: "Proof of Delivery", required: true },
+    { docType: "Permit", required: false },
+  ],
 };
 
-function getDocSlots(providerType: ProviderType): DocSlot[] {
-  return (DOCS_MAP[providerType] ?? []).map((d) => ({ ...d, file: null }));
+// Actual upload slots — direction-aware for types that need Export/Import
+function getDocSlots(
+  providerType: ProviderType,
+  direction: "Export" | "Import" | "",
+): DocSlot[] {
+  const kastamLabel = direction
+    ? `Kastam Form/Permit (${direction})`
+    : "Kastam Form/Permit";
+
+  const defs: { docType: string; required: boolean }[] = (() => {
+    switch (providerType) {
+      case "Seafreight":
+        return [
+          { docType: "Commercial Invoice", required: true },
+          { docType: "Packing List", required: true },
+          { docType: kastamLabel, required: true },
+          { docType: "Proof of Delivery", required: true },
+          { docType: "Bill of Lading", required: true },
+          { docType: "Billing Invoice from Provider", required: true },
+        ];
+      case "Airfreight":
+        return [
+          { docType: "Commercial Invoice", required: true },
+          { docType: "Packing List", required: true },
+          { docType: kastamLabel, required: true },
+          { docType: "Proof of Delivery", required: true },
+          { docType: "Airwaybill", required: true },
+          { docType: "Billing Invoice from Provider", required: true },
+        ];
+      case "Local Transport":
+        return [
+          { docType: "Billing Invoice from Provider", required: true },
+          { docType: "Commercial Invoice", required: true },
+          { docType: "Packing List", required: true },
+          { docType: "Cargo Photos", required: true },
+          { docType: "Proof of Delivery", required: true },
+        ];
+      case "Customs Broker":
+        return [
+          { docType: "Billing Invoice from Provider", required: true },
+          { docType: "Commercial Invoice", required: true },
+          { docType: "Packing List", required: true },
+          { docType: "Permit", required: false },
+        ];
+      case "Cross Border Transport":
+        return [
+          { docType: "Billing Invoice from Provider", required: true },
+          { docType: kastamLabel, required: true },
+          { docType: "Commercial Invoice", required: true },
+          { docType: "Packing List", required: true },
+          { docType: "Cargo Photos", required: true },
+          { docType: "Proof of Delivery", required: true },
+          { docType: "Permit", required: false },
+        ];
+      default:
+        return [];
+    }
+  })();
+
+  return defs.map((d) => ({ ...d, file: null }));
 }
 
 // ── Progress bar ──────────────────────────────────────────────────────────────
@@ -245,13 +307,16 @@ function CreateFromDocumentsInner() {
     setProviderType(type);
   }
 
+  const NEEDS_INCOTERM: ProviderType[] = ["Seafreight", "Airfreight"];
+  const NEEDS_DIRECTION: ProviderType[] = ["Seafreight", "Airfreight", "Customs Broker", "Cross Border Transport"];
+
   function handleStep2Continue() {
     if (!providerType) return;
-    if ((providerType === "Seafreight" || providerType === "Airfreight") && !incoterm.trim()) {
+    if (NEEDS_INCOTERM.includes(providerType) && !incoterm.trim()) {
       setError("Please enter the Incoterm (e.g. CIF, FOB, EXW).");
       return;
     }
-    if (providerType === "Customs Broker" && !customsDirection) {
+    if (NEEDS_DIRECTION.includes(providerType) && !customsDirection) {
       setError("Please select Export or Import.");
       return;
     }
@@ -261,7 +326,7 @@ function CreateFromDocumentsInner() {
       service_type: providerType,
       incoterm: incoterm.trim(),
     }));
-    setDocSlots(getDocSlots(providerType));
+    setDocSlots(getDocSlots(providerType, customsDirection));
     setStep(3);
   }
 
@@ -741,51 +806,16 @@ function CreateFromDocumentsInner() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
               {(
                 [
-                  {
-                    type: "Seafreight" as ProviderType,
-                    icon: "🚢",
-                    title: "Seafreight",
-                    desc: "Sea freight shipments",
-                    docs: SEAFREIGHT_DOCS,
-                    needsIncoterm: true,
-                  },
-                  {
-                    type: "Airfreight" as ProviderType,
-                    icon: "✈️",
-                    title: "Airfreight",
-                    desc: "Air freight shipments",
-                    docs: AIRFREIGHT_DOCS,
-                    needsIncoterm: true,
-                  },
-                  {
-                    type: "Local Transport" as ProviderType,
-                    icon: "🚛",
-                    title: "Local Transport",
-                    desc: "Domestic road transport",
-                    docs: LOCAL_TRANSPORT_DOCS,
-                    needsIncoterm: false,
-                  },
-                  {
-                    type: "Customs Broker" as ProviderType,
-                    icon: "📋",
-                    title: "Customs Broker",
-                    desc: "Customs clearance — Export or Import",
-                    docs: CUSTOMS_BROKER_DOCS,
-                    needsIncoterm: false,
-                  },
-                  {
-                    type: "Cross Border Transport" as ProviderType,
-                    icon: "🔄",
-                    title: "Cross Border Transport",
-                    desc: "International road transport",
-                    docs: CROSS_BORDER_DOCS,
-                    needsIncoterm: false,
-                  },
+                  { type: "Seafreight" as ProviderType,             icon: "🚢", title: "Seafreight",             desc: "Sea freight shipments" },
+                  { type: "Airfreight" as ProviderType,             icon: "✈️", title: "Airfreight",             desc: "Air freight shipments" },
+                  { type: "Local Transport" as ProviderType,        icon: "🚛", title: "Local Transport",        desc: "Domestic road transport" },
+                  { type: "Customs Broker" as ProviderType,         icon: "📋", title: "Customs Broker",         desc: "Customs clearance — Export or Import" },
+                  { type: "Cross Border Transport" as ProviderType, icon: "🔄", title: "Cross Border Transport", desc: "International road transport" },
                 ] as const
-              ).map(({ type, icon, title, desc, docs }) => (
+              ).map(({ type, icon, title, desc }) => (
                 <button
                   key={type}
-                  onClick={() => { handleSelectType(type); setError(""); }}
+                  onClick={() => { handleSelectType(type); setError(""); setIncoterm(""); setCustomsDirection(""); }}
                   className={`text-left p-5 rounded-xl border-2 transition-all ${
                     providerType === type
                       ? "border-blue-500 bg-blue-900/20"
@@ -796,7 +826,7 @@ function CreateFromDocumentsInner() {
                   <div className="font-semibold text-white mb-1">{title}</div>
                   <div className="text-xs text-slate-400 mb-3">{desc}</div>
                   <div className="space-y-1">
-                    {(docs as { docType: string; required: boolean }[]).map((doc) => (
+                    {CARD_DOCS[type].map((doc) => (
                       <div
                         key={doc.docType}
                         className={`text-xs flex items-center gap-1 ${
@@ -805,9 +835,10 @@ function CreateFromDocumentsInner() {
                       >
                         <span>{doc.required ? "★" : "•"}</span>
                         <span>{doc.docType}</span>
-                        {doc.required && (
-                          <span className="text-blue-400 text-[10px]">required</span>
-                        )}
+                        {doc.required
+                          ? <span className="text-blue-400 text-[10px]">required</span>
+                          : <span className="text-slate-600 text-[10px]">optional</span>
+                        }
                       </div>
                     ))}
                   </div>
@@ -815,46 +846,51 @@ function CreateFromDocumentsInner() {
               ))}
             </div>
 
-            {/* Conditional fields based on selected type */}
-            {(providerType === "Seafreight" || providerType === "Airfreight") && (
-              <div className="mb-5 bg-slate-900 border border-slate-700 rounded-xl p-4">
-                <label className="block text-sm font-medium text-slate-200 mb-1">
-                  Incoterm <span className="text-blue-400 text-xs">required</span>
-                </label>
-                <p className="text-xs text-slate-500 mb-2">
-                  e.g. EXW, FOB, CIF, DAP, DDP
-                </p>
-                <input
-                  type="text"
-                  value={incoterm}
-                  onChange={(e) => setIncoterm(e.target.value.toUpperCase())}
-                  placeholder="Enter incoterm..."
-                  maxLength={10}
-                  className="w-48 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 uppercase placeholder-slate-600 focus:border-blue-500 focus:outline-none"
-                />
-              </div>
-            )}
+            {/* Conditional fields — shown below the cards once a type is selected */}
+            {providerType && (
+              <div className="mb-5 space-y-4">
+                {/* Incoterm — Seafreight & Airfreight only */}
+                {NEEDS_INCOTERM.includes(providerType) && (
+                  <div className="bg-slate-900 border border-slate-700 rounded-xl p-4">
+                    <label className="block text-sm font-medium text-slate-200 mb-1">
+                      Incoterm <span className="text-blue-400 text-xs ml-1">mandatory</span>
+                    </label>
+                    <p className="text-xs text-slate-500 mb-2">e.g. EXW, FOB, CIF, DAP, DDP</p>
+                    <input
+                      type="text"
+                      value={incoterm}
+                      onChange={(e) => setIncoterm(e.target.value.toUpperCase())}
+                      placeholder="Enter incoterm..."
+                      maxLength={10}
+                      className="w-48 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 uppercase placeholder-slate-600 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                )}
 
-            {providerType === "Customs Broker" && (
-              <div className="mb-5 bg-slate-900 border border-slate-700 rounded-xl p-4">
-                <label className="block text-sm font-medium text-slate-200 mb-2">
-                  Customs Direction <span className="text-blue-400 text-xs">required</span>
-                </label>
-                <div className="flex gap-3">
-                  {(["Export", "Import"] as const).map((dir) => (
-                    <button
-                      key={dir}
-                      onClick={() => setCustomsDirection(dir)}
-                      className={`px-6 py-2 rounded-lg border-2 text-sm font-medium transition-all ${
-                        customsDirection === dir
-                          ? "border-blue-500 bg-blue-900/20 text-blue-300"
-                          : "border-slate-700 bg-slate-800 text-slate-400 hover:border-slate-500"
-                      }`}
-                    >
-                      {dir}
-                    </button>
-                  ))}
-                </div>
+                {/* Export / Import — Seafreight, Airfreight, Customs Broker, Cross Border */}
+                {NEEDS_DIRECTION.includes(providerType) && (
+                  <div className="bg-slate-900 border border-slate-700 rounded-xl p-4">
+                    <label className="block text-sm font-medium text-slate-200 mb-2">
+                      Export or Import? <span className="text-blue-400 text-xs ml-1">mandatory</span>
+                    </label>
+                    <div className="flex gap-3">
+                      {(["Export", "Import"] as const).map((dir) => (
+                        <button
+                          key={dir}
+                          type="button"
+                          onClick={() => setCustomsDirection(dir)}
+                          className={`px-8 py-2 rounded-lg border-2 text-sm font-medium transition-all ${
+                            customsDirection === dir
+                              ? "border-blue-500 bg-blue-900/20 text-blue-300"
+                              : "border-slate-700 bg-slate-800 text-slate-400 hover:border-slate-500"
+                          }`}
+                        >
+                          {dir}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

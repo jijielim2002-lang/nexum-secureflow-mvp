@@ -121,7 +121,7 @@ export async function POST(req: NextRequest) {
   // Include customer info if columns exist (non-breaking)
   if (job_data.customer_name)        jobInsert.customer_name        = job_data.customer_name;
   if (job_data.customer_email)       jobInsert.customer_email       = job_data.customer_email;
-  if (job_data.customer_company)     jobInsert.customer_company     = job_data.customer_company;
+  // customer_company is not a column on secured_jobs — stored in provider_customers table
   if (job_data.provider_customer_id) jobInsert.provider_customer_id = job_data.provider_customer_id;
 
   const { error: jobErr } = await admin

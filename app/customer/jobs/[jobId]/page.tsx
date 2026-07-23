@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { insertAuditLog } from "@/lib/auditLog";
 import { uploadJobDocument } from "@/lib/documents";
 import { JobFlowTracker } from "@/components/JobFlowTracker";
+import { JobTimeline }    from "@/components/JobTimeline";
 import { DocumentList } from "@/components/DocumentList";
 import { LogoutButton } from "@/components/LogoutButton";
 import { useAuth } from "@/contexts/AuthContext";
@@ -1244,6 +1245,15 @@ export default function CustomerJobDetailPage({
             currency={job.currency}
             isFullPayment={isFullPayment}
             deliveryConfirmationStatus={job.delivery_confirmation_status}
+          />
+        </div>
+
+        {/* ── Activity Timeline ── */}
+        <div className="mb-6 bg-slate-900 border border-slate-800 rounded-xl p-5">
+          <JobTimeline
+            jobReference={job.job_reference}
+            role="customer"
+            token={typeof window !== "undefined" ? (localStorage.getItem("sb-access-token") ?? undefined) : undefined}
           />
         </div>
 

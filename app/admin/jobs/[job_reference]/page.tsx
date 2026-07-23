@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { OPTIONAL_MODULES_DISABLED } from "@/lib/appEnv";
 import { insertAuditLog } from "@/lib/auditLog";
 import { JobFlowTracker } from "@/components/JobFlowTracker";
+import { JobTimeline }    from "@/components/JobTimeline";
 import { DocumentList } from "@/components/DocumentList";
 import { LogoutButton } from "@/components/LogoutButton";
 import { InviteLink } from "@/components/InviteLink";
@@ -1457,6 +1458,15 @@ export default function AdminJobDetailPage({
             actorName={profile?.full_name ?? "Admin"}
             currency={job.currency}
             onUpdate={loadJob}
+          />
+        </div>
+
+        {/* ── Activity Timeline ── */}
+        <div className="mb-6 bg-slate-900 border border-slate-800 rounded-xl p-5">
+          <JobTimeline
+            jobReference={job.job_reference}
+            role="admin"
+            token={typeof window !== "undefined" ? (localStorage.getItem("sb-access-token") ?? undefined) : undefined}
           />
         </div>
 

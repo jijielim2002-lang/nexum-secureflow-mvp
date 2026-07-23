@@ -47,10 +47,26 @@ interface UploadedFile {
   upload_status: "pending" | "uploading" | "done" | "failed";
 }
 
+interface ExtractionStage {
+  stage: string;
+  label: string;
+  status: "success" | "skipped" | "failed" | "unavailable";
+  confidence?: number;
+  cost_usd: number;
+  reason?: string;
+}
+
 interface ExtractedFile extends UploadedFile {
-  extract_status: "pending" | "extracting" | "done" | "failed";
+  extract_status: "pending" | "extracting" | "done" | "failed" | "manual";
   confidence_score?: number;
   error_msg?: string;
+  stages?: ExtractionStage[];
+  llm_used?: boolean;
+  ai_unavailable?: boolean;
+  manual_required?: boolean;
+  total_cost_usd?: number;
+  document_type?: string;
+  text_length?: number;
 }
 
 interface FieldValues {
@@ -509,8 +525,15 @@ function CreateFromDocumentsInner() {
           });
           const data = await res.json();
           if (data.ok) {
-            initial[i].extract_status = "done";
-            initial[i].confidence_score = data.confidence_score ?? 0;
+            initial[i].extract_status = data.manual_required ? "manual" : "done";
+            initial[i].confidence_score  = data.confidence_score ?? 0;
+            initial[i].stages            = data.stages ?? [];
+            initial[i].llm_used          = data.llm_used ?? false;
+            initial[i].ai_unavailable    = data.ai_unavailable ?? false;
+            initial[i].manual_required   = data.manual_required ?? false;
+            initial[i].total_cost_usd    = data.total_cost_usd ?? 0;
+            initial[i].document_type     = data.document_type;
+            initial[i].text_length       = data.text_length ?? 0;
           } else {
             initial[i].extract_status = "failed";
             initial[i].error_msg = data.error ?? `HTTP ${res.status}`;
@@ -1122,7 +1145,7 @@ function CreateFromDocumentsInner() {
               Extract Job Information
             </h2>
             <p className="text-sm text-slate-500 mb-5">
-              Our AI will read your uploaded documents and extract job details.
+              Nexum Extraction Engine v1 — local text extraction first, AI only when needed.
             </p>
 
             {extractedFiles.length === 0 && (
@@ -1136,40 +1159,84 @@ function CreateFromDocumentsInner() {
             )}
 
             {extractedFiles.length > 0 && (
-              <div className="mb-5 space-y-2">
+              <div className="mb-5 space-y-3">
                 {extractedFiles.map((f, i) => (
                   <div
                     key={i}
-                    className="flex items-center gap-3 bg-slate-900 border border-slate-800 rounded-lg px-4 py-2.5"
+                    className="bg-slate-900 border border-slate-800 rounded-lg px-4 py-3"
                   >
-                    <span
-                      className={
-                        f.extract_status === "done"
-                          ? "text-emerald-400"
-                          : f.extract_status === "failed"
-                          ? "text-red-400"
-                          : f.extract_status === "extracting"
-                          ? "text-amber-400 animate-pulse"
-                          : "text-slate-500"
-                      }
-                    >
-                      {f.extract_status === "done"
-                        ? "✓"
-                        : f.extract_status === "failed"
-                        ? "✗"
-                        : f.extract_status === "extracting"
-                        ? "⟳"
+                    {/* File header row */}
+                    <div className="flex items-center gap-3">
+                      <span
+                        className={
+                          f.extract_status === "done"
+                            ? "text-emerald-400 text-lg"
+                            : f.extract_status === "manual"
+                            ? "text-amber-400 text-lg"
+                            : f.extract_status === "failed"
+                            ? "text-red-400 text-lg"
+                            : f.extract_status === "extracting"
+                            ? "text-blue-400 text-lg animate-pulse"
+                            : "text-slate-500 text-lg"
+                        }
+                      >
+                        {f.extract_status === "done"    ? "✓"
+                        : f.extract_status === "manual" ? "✎"
+                        : f.extract_status === "failed" ? "✗"
+                        : f.extract_status === "extracting" ? "⟳"
                         : "○"}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <span className="text-sm text-slate-200 truncate block">{f.file_name}</span>
-                      {f.extract_status === "failed" && f.error_msg && (
-                        <span className="text-xs text-red-400 truncate block">{f.error_msg}</span>
-                      )}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm text-slate-200 truncate block font-medium">{f.file_name}</span>
+                        {f.document_type && (
+                          <span className="text-xs text-slate-500">{f.document_type}</span>
+                        )}
+                        {f.extract_status === "failed" && f.error_msg && (
+                          <span className="text-xs text-red-400 block mt-0.5">{f.error_msg}</span>
+                        )}
+                        {f.extract_status === "manual" && (
+                          <span className="text-xs text-amber-400 block mt-0.5">
+                            AI unavailable — fields can be entered manually in next step
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {f.total_cost_usd !== undefined && f.total_cost_usd > 0 && (
+                          <span className="text-xs text-slate-500">${f.total_cost_usd.toFixed(4)}</span>
+                        )}
+                        {f.total_cost_usd === 0 && f.extract_status === "done" && (
+                          <span className="text-xs text-emerald-600">$0.00</span>
+                        )}
+                        {f.confidence_score !== undefined && f.extract_status !== "pending" && (
+                          <ConfidenceBadge score={f.confidence_score} />
+                        )}
+                      </div>
                     </div>
-                    <span className="text-xs text-slate-500 shrink-0">{f.doc_type}</span>
-                    {f.confidence_score !== undefined && (
-                      <ConfidenceBadge score={f.confidence_score} />
+
+                    {/* Extraction stages (shown after extracting) */}
+                    {f.stages && f.stages.length > 0 && (
+                      <div className="mt-2.5 pt-2.5 border-t border-slate-800 flex flex-wrap gap-x-4 gap-y-1">
+                        {f.stages.map((s, si) => (
+                          <div key={si} className="flex items-center gap-1.5">
+                            <span className={
+                              s.status === "success"     ? "text-emerald-400 text-xs" :
+                              s.status === "skipped"     ? "text-slate-600 text-xs" :
+                              s.status === "unavailable" ? "text-slate-600 text-xs" :
+                                                           "text-red-400 text-xs"
+                            }>
+                              {s.status === "success" ? "✓" : s.status === "skipped" ? "—" : s.status === "unavailable" ? "—" : "✗"}
+                            </span>
+                            <span className={`text-xs ${
+                              s.status === "success"  ? "text-slate-300" :
+                              s.status === "failed"   ? "text-red-400"   :
+                                                        "text-slate-600"
+                            }`}>
+                              {s.label}
+                              {s.confidence != null && s.status === "success" ? ` (${s.confidence}%)` : ""}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </div>
                 ))}
@@ -1180,6 +1247,11 @@ function CreateFromDocumentsInner() {
               <div className="mb-4 flex items-center gap-3">
                 <span className="text-sm text-slate-400">Overall confidence:</span>
                 <ConfidenceBadge score={batchConfidence} />
+                {extractedFiles.length > 0 && (
+                  <span className="text-xs text-slate-500">
+                    Est. cost: ${extractedFiles.reduce((s, f) => s + (f.total_cost_usd ?? 0), 0).toFixed(4)}
+                  </span>
+                )}
               </div>
             )}
 
@@ -1189,7 +1261,7 @@ function CreateFromDocumentsInner() {
 
             {extractedFiles.length > 0 &&
               extractedFiles.every(
-                (f) => f.extract_status === "done" || f.extract_status === "failed"
+                (f) => ["done", "failed", "manual"].includes(f.extract_status)
               ) && (
                 <div className="flex gap-3">
                   <button

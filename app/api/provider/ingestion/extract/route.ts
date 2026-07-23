@@ -355,6 +355,7 @@ If a field cannot be found, use null. confidence_score should reflect overall ex
         "Content-Type":      "application/json",
         "x-api-key":         process.env.ANTHROPIC_API_KEY ?? "",
         "anthropic-version": "2023-06-01",
+        ...(isPDF ? { "anthropic-beta": "pdfs-2024-09-25" } : {}),
       },
       body: JSON.stringify({
         model:      "claude-haiku-4-5-20251001",

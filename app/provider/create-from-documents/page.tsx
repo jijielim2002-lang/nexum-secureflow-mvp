@@ -50,6 +50,7 @@ interface UploadedFile {
 interface ExtractedFile extends UploadedFile {
   extract_status: "pending" | "extracting" | "done" | "failed";
   confidence_score?: number;
+  error_msg?: string;
 }
 
 interface FieldValues {
@@ -512,9 +513,11 @@ function CreateFromDocumentsInner() {
             initial[i].confidence_score = data.confidence_score ?? 0;
           } else {
             initial[i].extract_status = "failed";
+            initial[i].error_msg = data.error ?? `HTTP ${res.status}`;
           }
-        } catch {
+        } catch (fetchErr) {
           initial[i].extract_status = "failed";
+          initial[i].error_msg = fetchErr instanceof Error ? fetchErr.message : "Network error";
         }
 
         setExtractedFiles([...initial]);
@@ -1158,10 +1161,13 @@ function CreateFromDocumentsInner() {
                         ? "⟳"
                         : "○"}
                     </span>
-                    <span className="flex-1 text-sm text-slate-200 truncate">
-                      {f.file_name}
-                    </span>
-                    <span className="text-xs text-slate-500">{f.doc_type}</span>
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm text-slate-200 truncate block">{f.file_name}</span>
+                      {f.extract_status === "failed" && f.error_msg && (
+                        <span className="text-xs text-red-400 truncate block">{f.error_msg}</span>
+                      )}
+                    </div>
+                    <span className="text-xs text-slate-500 shrink-0">{f.doc_type}</span>
                     {f.confidence_score !== undefined && (
                       <ConfidenceBadge score={f.confidence_score} />
                     )}

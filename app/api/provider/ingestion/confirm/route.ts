@@ -90,7 +90,17 @@ export async function POST(req: NextRequest) {
   const job_reference = generateJobReference();
   const now = new Date().toISOString();
   const jobValue = parseFloat(String(job_data.job_value ?? "0")) || 0;
-  const confidenceScore = batch.confidence_score ?? null;
+
+  // Look up the provider company name (service_provider is NOT NULL in secured_jobs)
+  let serviceProviderName = "Unknown Provider";
+  if (batch.provider_company_id) {
+    const { data: company } = await admin
+      .from("companies")
+      .select("name")
+      .eq("id", batch.provider_company_id)
+      .maybeSingle();
+    if (company?.name) serviceProviderName = company.name;
+  }
 
   // Only insert columns that exist in secured_jobs (see live_baseline schema).
   // Columns NOT in the table: title, created_from_documents, source_ingestion_batch_id,
@@ -98,6 +108,7 @@ export async function POST(req: NextRequest) {
   // job_status CHECK constraint values must match exactly.
   const jobInsert: Record<string, unknown> = {
     job_reference,
+    service_provider:  serviceProviderName,
     service_type:      job_data.service_type      ?? null,
     route:             job_data.route              ?? null,
     cargo_description: job_data.cargo_description ?? null,

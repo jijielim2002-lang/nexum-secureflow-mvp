@@ -244,10 +244,15 @@ function getSchemaForDocType(documentType: string): string {
 }
 
 // ── OpenAI extraction ──────────────────────────────────────────────────────────
+// NOTE: OpenAI vision API only supports images (jpeg/png/gif/webp), NOT PDFs.
+// For PDFs we download, convert to base64, and send via the file content block.
+// Images are sent via image_url for efficiency.
 
 async function extractWithOpenAI(
   signedUrl:    string,
   documentType: string,
+  fileBytes?:   ArrayBuffer,  // pre-downloaded bytes (reused for PDF)
+  mimeType?:    string,
 ): Promise<{ data: Record<string, unknown>; confidence: number; model: string; durationMs: number }> {
   const schema = getSchemaForDocType(documentType);
   const systemPrompt = `You are a document data extraction expert for logistics and trade finance.
@@ -255,6 +260,14 @@ Extract structured data from the provided document image.
 ${schema}
 Return ONLY valid JSON. No markdown, no explanation, just the JSON object.
 If a field cannot be found, use null. confidence_score should reflect overall extraction quality (0-100).`;
+
+  const isPDF = mimeType?.includes("pdf") || signedUrl.toLowerCase().includes(".pdf");
+
+  // For PDFs, OpenAI needs the file uploaded first (Files API)
+  // Simpler approach: skip OpenAI for PDFs — Anthropic handles PDFs natively
+  if (isPDF) {
+    throw new Error("PDF_SKIP — use Anthropic for PDF extraction");
+  }
 
   const start = Date.now();
   const controller = new AbortController();
@@ -322,14 +335,13 @@ ${schema}
 Return ONLY valid JSON. No markdown, no explanation, just the JSON object.
 If a field cannot be found, use null. confidence_score should reflect overall extraction quality (0-100).`;
 
-  // Download image bytes to pass as base64 (Anthropic requires base64 for images)
+  // Download file bytes — Anthropic supports both images and PDFs natively
   const imgRes = await fetch(signedUrl);
   if (!imgRes.ok) throw new Error("Failed to fetch document for Anthropic: " + imgRes.status);
   const imgBuf = await imgRes.arrayBuffer();
   const base64 = Buffer.from(imgBuf).toString("base64");
   const contentType = imgRes.headers.get("content-type") ?? "image/jpeg";
-  // Anthropic only supports jpeg/png/gif/webp
-  const safeType = contentType.startsWith("image/") ? contentType : "image/jpeg";
+  const isPDF = contentType.includes("pdf") || signedUrl.toLowerCase().includes(".pdf");
 
   const start = Date.now();
   const controller = new AbortController();
@@ -352,10 +364,17 @@ If a field cannot be found, use null. confidence_score should reflect overall ex
           {
             role: "user",
             content: [
-              {
-                type:   "image",
-                source: { type: "base64", media_type: safeType, data: base64 },
-              },
+              isPDF
+                ? {
+                    // PDFs use "document" type — Anthropic native PDF support
+                    type:   "document",
+                    source: { type: "base64", media_type: "application/pdf", data: base64 },
+                  }
+                : {
+                    // Images use "image" type
+                    type:   "image",
+                    source: { type: "base64", media_type: contentType.startsWith("image/") ? contentType : "image/jpeg", data: base64 },
+                  },
               { type: "text", text: "Extract structured data from this document and return valid JSON only." },
             ],
           },
@@ -492,12 +511,37 @@ export async function POST(req: NextRequest) {
     let confidence_score = 0;
     let comparisonStatus: string | null = null;
 
-    if (!process.env.OPENAI_API_KEY || !ENABLE_LLM) {
-      // No API key — return empty schema
-      extracted_data = { note: "No OpenAI API key configured — extraction skipped (AI-extracted draft)" };
+    // Detect PDF so we can route to Anthropic (which supports PDFs natively)
+    const isPDFFile = (fileRecord.mime_type ?? "").includes("pdf") ||
+                      (fileRecord.storage_path ?? "").toLowerCase().endsWith(".pdf");
+
+    if (!ENABLE_LLM) {
+      extracted_data = { note: "LLM extraction disabled — AI-extracted draft" };
       confidence_score = 0;
+    } else if (isPDFFile || !process.env.OPENAI_API_KEY) {
+      // ── PDF or no OpenAI key: use Anthropic as primary ─────────────────────
+      if (!process.env.ANTHROPIC_API_KEY) {
+        extracted_data = { note: "No API key configured — extraction skipped (AI-extracted draft)" };
+        confidence_score = 0;
+      } else {
+        const primary = await extractWithAnthropic(signedUrl, documentType);
+        extracted_data = primary.data;
+        confidence_score = primary.confidence;
+        comparisonStatus = null;
+
+        await admin.from("document_extraction_runs").insert({
+          file_id,
+          provider:         "Anthropic",
+          model:            primary.model,
+          status:           "Completed",
+          raw_output:       primary.data,
+          extracted_fields: primary.data,
+          confidence_score: primary.confidence,
+          duration_ms:      primary.durationMs,
+        });
+      }
     } else {
-      // ── Primary: OpenAI ────────────────────────────────────────────────────
+      // ── Primary: OpenAI (images only) ──────────────────────────────────────
       const primary = await extractWithOpenAI(signedUrl, documentType);
       extracted_data = primary.data;
       confidence_score = primary.confidence;

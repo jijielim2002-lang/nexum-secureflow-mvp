@@ -217,7 +217,7 @@ export default function AdminTrackingPage() {
                 {summary.customs_pending > 0 && (
                   <div className="bg-slate-900 border border-slate-700 rounded-xl p-4">
                     <p className="text-sm font-medium text-slate-300 mb-1">
-                      🔎 {summary.customs_pending} job(s) in customs with no update >48h
+                      🔎 {summary.customs_pending} job(s) in customs with no update &gt;48h
                     </p>
                     <button onClick={() => setTab("customs")} className="text-xs text-slate-400 hover:text-slate-300">
                       View →

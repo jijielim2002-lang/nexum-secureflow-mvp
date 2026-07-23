@@ -1392,7 +1392,16 @@ function CreateFromDocumentsInner() {
                 Back to Dashboard
               </button>
               <button
-                onClick={() => router.push(`/provider/jobs/${confirmedJobRef}`)}
+                onClick={() => {
+                  // Admin users can't access /provider/jobs (RLS blocks it) — redirect to admin view
+                  const role = typeof window !== "undefined"
+                    ? localStorage.getItem("nexum_dev_bypass") ?? ""
+                    : "";
+                  const isAdmin = role === "admin" || role === "1";
+                  router.push(isAdmin
+                    ? `/admin/jobs/${confirmedJobRef}`
+                    : `/provider/jobs/${confirmedJobRef}`);
+                }}
                 className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm transition-colors"
               >
                 View Job

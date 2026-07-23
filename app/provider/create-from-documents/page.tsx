@@ -660,22 +660,22 @@ function CreateFromDocumentsInner() {
     name: keyof FieldValues;
   }) {
     const conf = getFieldConf(name);
+    const hasValue = !!fieldValues[name];
     return (
-      <div className="grid grid-cols-3 gap-3 items-center py-2 border-b border-slate-800">
-        <label className="text-sm text-slate-400">{label}</label>
+      <div className="flex flex-col gap-0.5 py-2 border-b border-slate-800/60">
         <div className="flex items-center gap-2">
-          <span className="text-sm text-slate-200 truncate">
-            {fieldValues[name] || <span className="text-slate-600 italic">not extracted</span>}
-          </span>
+          <label className="text-xs text-slate-500 flex-1">{label}</label>
           <ConfidenceBadge score={conf} />
         </div>
         <input
-          className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm text-slate-100 focus:outline-none focus:border-blue-500"
+          className={`w-full bg-slate-800/80 border rounded px-3 py-1.5 text-sm text-slate-100
+            focus:outline-none focus:border-blue-500 focus:bg-slate-800 transition-colors
+            ${hasValue ? "border-slate-600" : "border-slate-700/60 placeholder-slate-600"}`}
           value={fieldValues[name]}
           onChange={(e) =>
             setFieldValues((prev) => ({ ...prev, [name]: e.target.value }))
           }
-          placeholder="Edit value..."
+          placeholder={`Enter ${label.toLowerCase()}…`}
         />
       </div>
     );
@@ -1289,67 +1289,62 @@ function CreateFromDocumentsInner() {
               </div>
             )}
 
-            <div className="space-y-6 mb-6">
+            <div className="space-y-5 mb-6">
               {/* Customer & Service */}
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-                <h3 className="text-sm font-semibold text-slate-300 mb-3 uppercase tracking-wider">
+                <h3 className="text-xs font-semibold text-slate-400 mb-3 uppercase tracking-wider">
                   Customer &amp; Service
                 </h3>
-                <div className="grid grid-cols-3 gap-2 text-xs text-slate-500 mb-1 px-2">
-                  <span>Field</span><span>Extracted Value</span><span>Edit</span>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
+                  <FieldRow label="Customer Name" name="customer_name" />
+                  <FieldRow label="Customer Email" name="customer_email" />
+                  <FieldRow label="Service Type" name="service_type" />
+                  <FieldRow label="Incoterm" name="incoterm" />
+                  <FieldRow label="Route" name="route" />
                 </div>
-                <FieldRow label="Title" name="title" />
-                <FieldRow label="Customer Name" name="customer_name" />
-                <FieldRow label="Customer Email" name="customer_email" />
-                <FieldRow label="Service Type" name="service_type" />
-                <FieldRow label="Incoterm" name="incoterm" />
-                <FieldRow label="Route" name="route" />
               </div>
 
               {/* Cargo */}
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-                <h3 className="text-sm font-semibold text-slate-300 mb-3 uppercase tracking-wider">
+                <h3 className="text-xs font-semibold text-slate-400 mb-3 uppercase tracking-wider">
                   Cargo
                 </h3>
-                <div className="grid grid-cols-3 gap-2 text-xs text-slate-500 mb-1 px-2">
-                  <span>Field</span><span>Extracted Value</span><span>Edit</span>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
+                  <FieldRow label="Cargo Description" name="cargo_description" />
+                  <FieldRow label="HS Code" name="hs_code" />
+                  <FieldRow label="Quantity" name="quantity" />
+                  <FieldRow label="Gross Weight (kg)" name="gross_weight_kg" />
+                  <FieldRow label="Volume (CBM)" name="volume_cbm" />
                 </div>
-                <FieldRow label="Cargo Description" name="cargo_description" />
-                <FieldRow label="HS Code" name="hs_code" />
-                <FieldRow label="Quantity" name="quantity" />
-                <FieldRow label="Gross Weight (kg)" name="gross_weight_kg" />
-                <FieldRow label="Volume (CBM)" name="volume_cbm" />
               </div>
 
               {/* Financial */}
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-                <h3 className="text-sm font-semibold text-slate-300 mb-3 uppercase tracking-wider">
+                <h3 className="text-xs font-semibold text-slate-400 mb-3 uppercase tracking-wider">
                   Financial
                 </h3>
-                <div className="grid grid-cols-3 gap-2 text-xs text-slate-500 mb-1 px-2">
-                  <span>Field</span><span>Extracted Value</span><span>Edit</span>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
+                  <FieldRow label="Logistics Fee / Job Value" name="job_value" />
+                  <FieldRow label="Cargo Value" name="cargo_value" />
+                  <FieldRow label="Duty Amount" name="duty_amount" />
+                  <FieldRow label="Tax Amount" name="tax_amount" />
+                  <FieldRow label="Currency" name="currency" />
+                  <FieldRow label="Payment Terms" name="payment_terms" />
                 </div>
-                <FieldRow label="Logistics Fee (Job Value)" name="job_value" />
-                <FieldRow label="Cargo Value" name="cargo_value" />
-                <FieldRow label="Duty Amount" name="duty_amount" />
-                <FieldRow label="Tax Amount" name="tax_amount" />
-                <FieldRow label="Currency" name="currency" />
-                <FieldRow label="Payment Terms" name="payment_terms" />
               </div>
 
               {/* References */}
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-                <h3 className="text-sm font-semibold text-slate-300 mb-3 uppercase tracking-wider">
+                <h3 className="text-xs font-semibold text-slate-400 mb-3 uppercase tracking-wider">
                   References
                 </h3>
-                <div className="grid grid-cols-3 gap-2 text-xs text-slate-500 mb-1 px-2">
-                  <span>Field</span><span>Extracted Value</span><span>Edit</span>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
+                  <FieldRow label="Invoice Number" name="invoice_number" />
+                  <FieldRow label="Invoice Date" name="invoice_date" />
+                  <FieldRow label="Customs Form Number" name="customs_form_number" />
+                  <FieldRow label="BL / AWB Number" name="bl_awb_number" />
+                  <FieldRow label="Container Number" name="container_number" />
                 </div>
-                <FieldRow label="Invoice Number" name="invoice_number" />
-                <FieldRow label="Invoice Date" name="invoice_date" />
-                <FieldRow label="Customs Form Number" name="customs_form_number" />
-                <FieldRow label="BL / AWB Number" name="bl_awb_number" />
-                <FieldRow label="Container Number" name="container_number" />
               </div>
             </div>
 

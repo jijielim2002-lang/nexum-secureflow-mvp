@@ -109,11 +109,24 @@ export async function POST(req: NextRequest) {
   const batch_reference = generateBatchReference();
   const admin = adminClient();
 
+  // Auto-resolve provider_company_id from user's profile if not explicitly provided
+  let resolvedProviderCompanyId = provider_company_id ?? null;
+  if (!resolvedProviderCompanyId) {
+    const { data: profile } = await admin
+      .from("profiles")
+      .select("company_id, role")
+      .eq("id", user.id)
+      .maybeSingle();
+    if (profile?.company_id && profile.role === "service_provider") {
+      resolvedProviderCompanyId = profile.company_id;
+    }
+  }
+
   const { data, error } = await admin
     .from("document_ingestion_batches")
     .insert({
       batch_reference,
-      provider_company_id: provider_company_id ?? null,
+      provider_company_id: resolvedProviderCompanyId,
       created_by: user.id,
       provider_type,
       ingestion_status: "Draft",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { AuthGuard } from "@/components/AuthGuard";
 import { AdminNav } from "@/components/AdminNav";
@@ -32,8 +32,11 @@ interface ProviderCustomer {
 }
 
 interface DocSlot {
+  id: string;            // unique per slot — allows multiple slots of the same docType
   docType: string;
-  required: boolean;
+  required: boolean;     // required at job creation
+  allowMultiple: boolean;// user can add more of this type
+  deferrable?: boolean;  // optional now, required before payment release
   file: File | null;
 }
 
@@ -75,6 +78,13 @@ interface FieldValues {
 }
 
 // ── Provider type definitions ─────────────────────────────────────────────────
+
+interface DocDef {
+  docType: string;
+  required: boolean;
+  allowMultiple: boolean;
+  deferrable?: boolean;
+}
 
 // Static doc lists shown on service type cards (before direction is known)
 const CARD_DOCS: Record<ProviderType, { docType: string; required: boolean }[]> = {
@@ -118,7 +128,7 @@ const CARD_DOCS: Record<ProviderType, { docType: string; required: boolean }[]> 
   ],
 };
 
-// Actual upload slots — direction-aware for types that need Export/Import
+// Actual upload slots — direction-aware, with allowMultiple and deferrable flags
 function getDocSlots(
   providerType: ProviderType,
   direction: "Export" | "Import" | "",
@@ -127,57 +137,58 @@ function getDocSlots(
     ? `Kastam Form/Permit (${direction})`
     : "Kastam Form/Permit";
 
-  const defs: { docType: string; required: boolean }[] = (() => {
+  const defs: DocDef[] = (() => {
     switch (providerType) {
       case "Seafreight":
         return [
-          { docType: "Commercial Invoice", required: true },
-          { docType: "Packing List", required: true },
-          { docType: kastamLabel, required: true },
-          { docType: "Proof of Delivery", required: true },
-          { docType: "Bill of Lading", required: true },
-          { docType: "Billing Invoice from Provider", required: true },
+          { docType: "Commercial Invoice",              required: true,  allowMultiple: true  },
+          { docType: "Packing List",                    required: true,  allowMultiple: true  },
+          { docType: kastamLabel,                       required: true,  allowMultiple: true  },
+          { docType: "Proof of Delivery",               required: false, allowMultiple: false, deferrable: true },
+          { docType: "Bill of Lading",                  required: true,  allowMultiple: false },
+          { docType: "Billing Invoice from Provider",   required: true,  allowMultiple: true  },
         ];
       case "Airfreight":
         return [
-          { docType: "Commercial Invoice", required: true },
-          { docType: "Packing List", required: true },
-          { docType: kastamLabel, required: true },
-          { docType: "Proof of Delivery", required: true },
-          { docType: "Airwaybill", required: true },
-          { docType: "Billing Invoice from Provider", required: true },
+          { docType: "Commercial Invoice",              required: true,  allowMultiple: true  },
+          { docType: "Packing List",                    required: true,  allowMultiple: true  },
+          { docType: kastamLabel,                       required: true,  allowMultiple: true  },
+          { docType: "Proof of Delivery",               required: false, allowMultiple: false, deferrable: true },
+          { docType: "Airwaybill",                      required: true,  allowMultiple: false },
+          { docType: "Billing Invoice from Provider",   required: true,  allowMultiple: true  },
         ];
       case "Local Transport":
         return [
-          { docType: "Billing Invoice from Provider", required: true },
-          { docType: "Commercial Invoice", required: true },
-          { docType: "Packing List", required: true },
-          { docType: "Cargo Photos", required: true },
-          { docType: "Proof of Delivery", required: true },
+          { docType: "Billing Invoice from Provider",   required: true,  allowMultiple: true  },
+          { docType: "Commercial Invoice",              required: true,  allowMultiple: true  },
+          { docType: "Packing List",                    required: true,  allowMultiple: true  },
+          { docType: "Cargo Photos",                    required: false, allowMultiple: false, deferrable: true },
+          { docType: "Proof of Delivery",               required: false, allowMultiple: false, deferrable: true },
         ];
       case "Customs Broker":
         return [
-          { docType: "Billing Invoice from Provider", required: true },
-          { docType: "Commercial Invoice", required: true },
-          { docType: "Packing List", required: true },
-          { docType: "Permit", required: false },
+          { docType: "Billing Invoice from Provider",   required: true,  allowMultiple: true  },
+          { docType: "Commercial Invoice",              required: true,  allowMultiple: true  },
+          { docType: "Packing List",                    required: true,  allowMultiple: true  },
+          { docType: "Permit",                          required: false, allowMultiple: true  },
         ];
       case "Cross Border Transport":
         return [
-          { docType: "Billing Invoice from Provider", required: true },
-          { docType: kastamLabel, required: true },
-          { docType: "Commercial Invoice", required: true },
-          { docType: "Packing List", required: true },
-          { docType: "Cargo Photos", required: true },
-          { docType: "Proof of Delivery", required: true },
-          { docType: "Permit", required: false },
+          { docType: "Billing Invoice from Provider",   required: true,  allowMultiple: true  },
+          { docType: kastamLabel,                       required: true,  allowMultiple: true  },
+          { docType: "Commercial Invoice",              required: true,  allowMultiple: true  },
+          { docType: "Packing List",                    required: true,  allowMultiple: true  },
+          { docType: "Cargo Photos",                    required: false, allowMultiple: false, deferrable: true },
+          { docType: "Proof of Delivery",               required: false, allowMultiple: false, deferrable: true },
+          { docType: "Permit",                          required: false, allowMultiple: true  },
         ];
       default:
         return [];
     }
   })();
 
-  return defs.map((d) => ({ ...d, file: null }));
+  let counter = 0;
+  return defs.map((d) => ({ ...d, id: `slot-${counter++}`, file: null }));
 }
 
 // ── Progress bar ──────────────────────────────────────────────────────────────
@@ -332,15 +343,47 @@ function CreateFromDocumentsInner() {
 
   // ── Step 3: file selection ────────────────────────────────────────────────
 
-  function handleFileSelect(docType: string, file: File | null) {
-    setDocSlots((prev) =>
-      prev.map((s) => (s.docType === docType ? { ...s, file } : s))
-    );
+  function handleFileSelect(id: string, file: File | null) {
+    setDocSlots((prev) => prev.map((s) => (s.id === id ? { ...s, file } : s)));
+  }
+
+  function addExtraSlot(docType: string) {
+    setDocSlots((prev) => {
+      // Find the last index of this docType and insert after it
+      const lastIdx = prev.map((s) => s.docType).lastIndexOf(docType);
+      const ref = prev.find((s) => s.docType === docType);
+      const newSlot: DocSlot = {
+        id: `extra-${docType}-${Date.now()}`,
+        docType,
+        required: ref?.required ?? false,
+        allowMultiple: ref?.allowMultiple ?? true,
+        deferrable: ref?.deferrable,
+        file: null,
+      };
+      const next = [...prev];
+      next.splice(lastIdx + 1, 0, newSlot);
+      return next;
+    });
+  }
+
+  function removeExtraSlot(id: string) {
+    setDocSlots((prev) => prev.filter((s) => s.id !== id));
   }
 
   async function handleStep3Continue() {
     setError("");
-    const missingRequired = docSlots.filter((s) => s.required && !s.file).map((s) => s.docType);
+    // For display, number duplicate billing invoice slots
+    const billingIdx: Record<string, number> = {};
+    const missingRequired = docSlots
+      .filter((s) => s.required && !s.file)
+      .map((s) => {
+        if (s.docType === "Billing Invoice from Provider") {
+          billingIdx[s.docType] = (billingIdx[s.docType] ?? 0) + 1;
+          const count = docSlots.filter((x) => x.docType === s.docType).length;
+          return count > 1 ? `${s.docType} (${billingIdx[s.docType]})` : s.docType;
+        }
+        return s.docType;
+      });
     if (missingRequired.length > 0) {
       setError("Please upload all required documents: " + missingRequired.join(", "));
       return;
@@ -922,55 +965,106 @@ function CreateFromDocumentsInner() {
               PDF, JPG, PNG or WEBP — max 10 MB per file
             </p>
 
-            <div className="space-y-3 mb-6">
-              {docSlots.map((slot) => (
-                <div
-                  key={slot.docType}
-                  className="flex items-center gap-4 bg-slate-900 border border-slate-800 rounded-lg px-4 py-3"
-                >
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-slate-200">
-                        {slot.docType}
-                      </span>
-                      {slot.required ? (
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-blue-900 text-blue-300">
-                          Required
-                        </span>
-                      ) : (
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-slate-800 text-slate-500">
-                          Optional
-                        </span>
+            <div className="space-y-1 mb-6">
+              {(() => {
+                // Count occurrences per docType for numbering
+                const typeCount: Record<string, number> = {};
+                const typeIdx: Record<string, number> = {};
+                docSlots.forEach((s) => { typeCount[s.docType] = (typeCount[s.docType] ?? 0) + 1; });
+
+                // Find last slot id per docType for "Add another" button
+                const lastSlotId: Record<string, string> = {};
+                docSlots.forEach((s) => { lastSlotId[s.docType] = s.id; });
+
+                const rows: React.ReactNode[] = [];
+
+                docSlots.forEach((slot) => {
+                  typeIdx[slot.docType] = (typeIdx[slot.docType] ?? 0) + 1;
+                  const nth = typeIdx[slot.docType];
+                  const total = typeCount[slot.docType];
+                  const isFirst = nth === 1;
+                  const isLast = slot.id === lastSlotId[slot.docType];
+                  const displayLabel = total > 1
+                    ? `${slot.docType} (${nth})`
+                    : slot.docType;
+
+                  rows.push(
+                    <div
+                      key={slot.id}
+                      className="flex items-center gap-3 bg-slate-900 border border-slate-800 rounded-lg px-4 py-3"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-medium text-slate-200">
+                            {displayLabel}
+                          </span>
+                          {slot.deferrable ? (
+                            <span className="text-xs px-1.5 py-0.5 rounded bg-amber-900/50 text-amber-300">
+                              Upload before payment release
+                            </span>
+                          ) : slot.required ? (
+                            <span className="text-xs px-1.5 py-0.5 rounded bg-blue-900 text-blue-300">
+                              Required
+                            </span>
+                          ) : (
+                            <span className="text-xs px-1.5 py-0.5 rounded bg-slate-800 text-slate-500">
+                              Optional
+                            </span>
+                          )}
+                        </div>
+                        {slot.file && (
+                          <div className="text-xs text-slate-400 mt-1 truncate">{slot.file.name}</div>
+                        )}
+                      </div>
+                      <input
+                        ref={(el) => { fileInputRefs.current[slot.id] = el; }}
+                        type="file"
+                        accept=".pdf,.jpg,.jpeg,.png,.webp"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0] ?? null;
+                          if (f && f.size > 10 * 1024 * 1024) {
+                            setError(`${f.name} exceeds 10 MB limit.`);
+                            return;
+                          }
+                          handleFileSelect(slot.id, f);
+                        }}
+                      />
+                      <button
+                        onClick={() => fileInputRefs.current[slot.id]?.click()}
+                        className="shrink-0 px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 rounded-lg transition-colors"
+                      >
+                        {slot.file ? "Change" : "Choose File"}
+                      </button>
+                      {/* Remove — only for extra copies (not the first slot of a type) */}
+                      {!isFirst && (
+                        <button
+                          onClick={() => removeExtraSlot(slot.id)}
+                          className="shrink-0 text-slate-500 hover:text-red-400 text-xl leading-none transition-colors"
+                          title="Remove"
+                        >
+                          ×
+                        </button>
                       )}
                     </div>
-                    {slot.file && (
-                      <div className="text-xs text-slate-400 mt-1 truncate">
-                        {slot.file.name}
-                      </div>
-                    )}
-                  </div>
-                  <input
-                    ref={(el) => { fileInputRefs.current[slot.docType] = el; }}
-                    type="file"
-                    accept=".pdf,.jpg,.jpeg,.png,.webp"
-                    className="hidden"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0] ?? null;
-                      if (f && f.size > 10 * 1024 * 1024) {
-                        setError(`${f.name} exceeds 10 MB limit.`);
-                        return;
-                      }
-                      handleFileSelect(slot.docType, f);
-                    }}
-                  />
-                  <button
-                    onClick={() => fileInputRefs.current[slot.docType]?.click()}
-                    className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 rounded-lg transition-colors"
-                  >
-                    {slot.file ? "Change" : "Choose File"}
-                  </button>
-                </div>
-              ))}
+                  );
+
+                  // "Add another" button after the last slot of each allowMultiple type
+                  if (slot.allowMultiple && isLast) {
+                    rows.push(
+                      <button
+                        key={`add-${slot.docType}`}
+                        onClick={() => addExtraSlot(slot.docType)}
+                        className="ml-4 text-xs text-blue-400 hover:text-blue-300 underline underline-offset-2 transition-colors"
+                      >
+                        + Add another {slot.docType.toLowerCase()}
+                      </button>
+                    );
+                  }
+                });
+
+                return rows;
+              })()}
             </div>
 
             {/* Upload progress */}

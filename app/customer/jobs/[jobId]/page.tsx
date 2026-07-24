@@ -4,7 +4,6 @@ import Link from "next/link";
 import { OPTIONAL_MODULES_DISABLED } from "@/lib/appEnv";
 import { supabase } from "@/lib/supabaseClient";
 import { insertAuditLog } from "@/lib/auditLog";
-import { uploadJobDocument } from "@/lib/documents";
 import { JobFlowTracker } from "@/components/JobFlowTracker";
 import { JobTimeline }    from "@/components/JobTimeline";
 import { DocumentList } from "@/components/DocumentList";
@@ -459,6 +458,7 @@ export default function CustomerJobDetailPage({
     setShowModal(false);
   }
 
+  // RLS policy allows: 'Payment Proof', 'Deposit Proof', 'Balance Proof', 'Full Payment Proof'
   const docTypeMap: Record<PaymentType, string> = {
     "Deposit":      "Deposit Proof",
     "Balance":      "Balance Proof",
@@ -476,51 +476,52 @@ export default function CustomerJobDetailPage({
     setSubmitState("loading");
     setSubmitError("");
 
-    // 1. Upload document to Storage + insert documents record + audit log
-    const { error: uploadErr } = await uploadJobDocument({
-      job_reference:    jobId,
-      uploaded_by_role: "customer",
-      uploaded_by_name: profile?.full_name ?? "Customer",
-      document_type:    docTypeMap[paymentType],
-      file:             selectedFile,
-      remarks:          remarks || undefined,
-    });
+    // 1. Upload file to Storage (client-side, storage bucket policies allow this)
+    const timestamp = Date.now();
+    const safeName  = selectedFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const typeSlug  = docTypeMap[paymentType].replace(/\s+/g, "_");
+    const filePath  = `${jobId}/${typeSlug}/${timestamp}-${safeName}`;
 
-    if (uploadErr) {
+    const { error: storageErr } = await supabase.storage
+      .from("job-documents")
+      .upload(filePath, selectedFile, { upsert: false });
+
+    if (storageErr) {
       setSubmitState("error");
-      setSubmitError(uploadErr);
+      setSubmitError(storageErr.message);
       return;
     }
 
-    // 2. Update secured_jobs status
-    const payloadMap: Record<PaymentType, Record<string, string>> = {
-      "Deposit": {
-        payment_status:    "Deposit Proof Uploaded",
-        job_status:        "Awaiting Deposit Confirmation",
-        current_milestone: "Deposit Proof Uploaded",
-        updated_at:        new Date().toISOString(),
-      },
-      "Balance": {
-        payment_status:    "Balance Proof Uploaded",
-        current_milestone: "Balance Proof Uploaded",
-        updated_at:        new Date().toISOString(),
-      },
-      "Full Payment": {
-        payment_status:    "Full Payment Proof Uploaded",
-        job_status:        "Awaiting Deposit Confirmation",
-        current_milestone: "Full Payment Proof Uploaded",
-        updated_at:        new Date().toISOString(),
-      },
-    };
+    // 2. Insert document record + update job status via API route (service-role, bypasses RLS)
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token
+      ?? (typeof window !== "undefined"
+        ? (() => { try { const s = localStorage.getItem("supabase.auth.token"); return s ? JSON.parse(s).access_token : null; } catch { return null; } })()
+        : null);
 
-    const { error } = await supabase
-      .from("secured_jobs")
-      .update(payloadMap[paymentType])
-      .eq("job_reference", jobId);
+    const apiRes = await fetch("/api/customer/payment-proof", {
+      method: "POST",
+      headers: {
+        "Content-Type":  "application/json",
+        "Authorization": `Bearer ${token ?? ""}`,
+      },
+      body: JSON.stringify({
+        job_reference:    jobId,
+        document_type:    docTypeMap[paymentType],
+        file_path:        filePath,
+        file_name:        selectedFile.name,
+        file_size:        selectedFile.size,
+        mime_type:        selectedFile.type || undefined,
+        payment_type:     paymentType,
+        uploaded_by_name: profile?.full_name ?? "Customer",
+        remarks:          remarks || undefined,
+      }),
+    });
 
-    if (error) {
+    const apiJson = await apiRes.json() as { ok?: boolean; error?: string };
+    if (!apiRes.ok || !apiJson.ok) {
       setSubmitState("error");
-      setSubmitError(error.message);
+      setSubmitError(apiJson.error ?? "Upload failed");
       return;
     }
 

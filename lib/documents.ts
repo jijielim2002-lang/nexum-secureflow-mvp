@@ -9,6 +9,7 @@ export interface UploadDocumentArgs {
   document_type:    string;
   file:             File;
   remarks?:         string;
+  company_id?:      string | null;
 }
 
 export async function uploadJobDocument(
@@ -39,6 +40,7 @@ export async function uploadJobDocument(
       file_size:        args.file.size,
       mime_type:        args.file.type || null,
       remarks:          args.remarks ?? null,
+      ...(args.company_id ? { company_id: args.company_id } : {}),
     })
     .select("id")
     .single();

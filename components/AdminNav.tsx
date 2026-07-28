@@ -36,6 +36,7 @@ const OPERATIONS = [
   { label: "Disputes",          href: "/admin/disputes" },
   { label: "Command Center",    href: "/admin/command-center" },
   { label: "DB Health",         href: "/admin/db-health" },
+  { label: "TradeFlow",         href: "/admin/tradeflow" },
 ];
 
 const SETTINGS = [
@@ -101,10 +102,11 @@ export function AdminNav({ currentPage }: AdminNavProps) {
 
         {/* Primary links */}
         <nav className="flex items-center gap-0.5 flex-1 min-w-0">
-          <Link href="/admin"           className={cls("dashboard")}>Dashboard</Link>
-          <Link href="/admin/jobs"      className={cls("jobs")}>Jobs</Link>
-          <Link href="/admin/companies" className={cls("companies")}>Companies</Link>
-          <Link href="/admin/users"     className={cls("users")}>Users</Link>
+          <Link href="/admin"              className={cls("dashboard")}>Dashboard</Link>
+          <Link href="/admin/jobs"       className={cls("jobs")}>Jobs</Link>
+          <Link href="/admin/companies"  className={cls("companies")}>Companies</Link>
+          <Link href="/admin/users"      className={cls("users")}>Users</Link>
+          <Link href="/admin/tradeflow"  className={cls("tradeflow") + " text-blue-400 hover:text-blue-300"}>TradeFlow</Link>
 
           <DropdownMenu label="Payments"   isOpen={open === "payments"}   onToggle={() => toggle("payments")}   items={PAYMENTS}   onClose={() => setOpen(null)} />
           <DropdownMenu label="Reports"    isOpen={open === "reports"}    onToggle={() => toggle("reports")}    items={REPORTS}    onClose={() => setOpen(null)} />

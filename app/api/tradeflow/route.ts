@@ -54,6 +54,7 @@ export async function GET(req: NextRequest) {
 
   if (auth.role !== "admin") {
     if (!auth.company_id) return NextResponse.json({ ok: true, requests: [] });
+    // Both customer and service_provider see requests tied to their company_id
     query = query.eq("customer_company_id", auth.company_id) as typeof query;
   }
 
@@ -67,7 +68,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const auth = await verifyUser(req);
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!["customer", "admin"].includes(auth.role)) {
+  if (!["customer", "service_provider", "admin"].includes(auth.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

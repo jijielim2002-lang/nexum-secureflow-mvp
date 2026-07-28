@@ -105,6 +105,7 @@ export default function CustomerJobsPage() {
               Customer
             </span>
             <Link href="/customer" className="hover:text-slate-100 transition-colors">Dashboard</Link>
+            <Link href="/customer/tradeflow" className="hover:text-slate-100 transition-colors font-medium text-blue-400">TradeFlow</Link>
             <Link href="/customer/notifications" className="hover:text-slate-100 transition-colors">Notifications</Link>
             <NotificationBell />
             <LogoutButton />

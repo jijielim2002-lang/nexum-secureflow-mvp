@@ -102,6 +102,7 @@ export default function CustomerDashboard() {
             <Link href="/customer/inquiries" className="hover:text-slate-100 transition-colors">Inquiries</Link>
             <Link href="/customer/quotations" className="hover:text-slate-100 transition-colors">Quotations</Link>
             <Link href="/customer/jobs" className="hover:text-slate-100 transition-colors">My Jobs</Link>
+            <Link href="/customer/tradeflow" className="hover:text-slate-100 transition-colors font-medium text-blue-400">TradeFlow</Link>
             <Link href="/customer/notifications" className="hover:text-slate-100 transition-colors">Notifications</Link>
             <NotificationBell />
             <LogoutButton />
@@ -180,11 +181,26 @@ export default function CustomerDashboard() {
         {state.status === "success" && (
           <>
             {/* Stats */}
-            <div className="mb-10 grid gap-4 sm:grid-cols-3">
+            <div className="mb-6 grid gap-4 sm:grid-cols-3">
               <StatCard label="Action Required" value={actionRequired} color="text-amber-400" highlight={actionRequired > 0} />
               <StatCard label="In Transit"      value={inProgress}    color="text-blue-400" />
               <StatCard label="Completed"       value={completed}     color="text-emerald-400" />
             </div>
+
+            {/* TradeFlow entry point */}
+            <Link
+              href="/customer/tradeflow"
+              className="mb-8 flex items-center justify-between rounded-xl border border-blue-500/20 bg-blue-500/5 px-5 py-4 hover:border-blue-500/40 hover:bg-blue-500/10 transition-all"
+            >
+              <div className="flex items-center gap-3">
+                <div className="h-9 w-9 rounded-lg bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-base">🔄</div>
+                <div>
+                  <p className="text-sm font-semibold text-blue-300">TradeFlow</p>
+                  <p className="text-xs text-slate-500">Supplier payment control · document-based release · remittance coordination</p>
+                </div>
+              </div>
+              <span className="text-xs text-blue-400 font-medium">Open →</span>
+            </Link>
 
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-300">Recent Jobs</h2>

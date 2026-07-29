@@ -356,6 +356,9 @@ export default function AdminDashboard() {
                   <Link href="/admin/exceptions" className="text-xs bg-teal-500/10 hover:bg-teal-500/20 border border-teal-500/20 text-teal-300 px-3 py-2 rounded-lg transition">
                     ⚠️ Exceptions
                   </Link>
+                  <Link href="/admin/orchestration" className="text-xs bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 text-purple-300 px-3 py-2 rounded-lg transition">
+                    🔗 Orchestration
+                  </Link>
                 </>
               )}
               {/* Finance Reviewer */}

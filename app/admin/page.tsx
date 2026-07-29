@@ -359,6 +359,9 @@ export default function AdminDashboard() {
                   <Link href="/admin/orchestration" className="text-xs bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 text-purple-300 px-3 py-2 rounded-lg transition">
                     🔗 Orchestration
                   </Link>
+                  <Link href="/admin/trade-chains" className="text-xs bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-blue-300 px-3 py-2 rounded-lg transition">
+                    🌐 Trade Chains
+                  </Link>
                 </>
               )}
               {/* Finance Reviewer */}

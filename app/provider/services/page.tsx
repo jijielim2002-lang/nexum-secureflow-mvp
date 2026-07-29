@@ -11,10 +11,17 @@ interface Listing {
   currency?: string; review_note?: string;
 }
 
-async function getToken() {
-  const { supabase } = await import("@/lib/supabaseClient");
-  const { data: { session } } = await supabase.auth.getSession();
-  return session?.access_token ?? "";
+async function getToken(): Promise<string> {
+  try {
+    const { supabase } = await import("@/lib/supabaseClient");
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.access_token) return session.access_token;
+  } catch { /* fall through */ }
+  try {
+    const stored = localStorage.getItem("supabase.auth.token");
+    if (stored) return (JSON.parse(stored) as { access_token?: string }).access_token ?? "";
+  } catch { /* ignore */ }
+  return "";
 }
 
 export default function ProviderServicesPage() {

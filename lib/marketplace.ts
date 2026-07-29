@@ -74,48 +74,155 @@ export interface ListingField {
   span?:       "full" | "half";  // grid column span
 }
 
+// ─── Predefined pick-lists ────────────────────────────────────────────────────
+
+export const COUNTRIES = [
+  "Malaysia","Singapore","Thailand","Indonesia","Vietnam","Philippines","Myanmar","Cambodia","Laos","Brunei",
+  "China","Hong Kong","Taiwan","Japan","South Korea","India","Bangladesh","Sri Lanka","Pakistan",
+  "Australia","New Zealand",
+  "United States","Canada","Mexico",
+  "United Kingdom","Germany","France","Netherlands","Belgium","Italy","Spain","Poland","Sweden","Switzerland",
+  "United Arab Emirates","Saudi Arabia","Qatar","Kuwait","Bahrain","Oman",
+  "South Africa","Kenya","Nigeria","Egypt",
+  "Other",
+];
+
+export const SEA_PORTS = [
+  // Malaysia
+  "Port Klang (PKL)","Penang Port (PEN)","Johor Port (JOH)","Pasir Gudang (PSG)","Kuantan Port (KUA)",
+  "Bintulu Port (BTU)","Kota Kinabalu Port (BKI)","Kuching Port (KCH)",
+  // Singapore
+  "Singapore (SIN)",
+  // Thailand
+  "Bangkok (BKK)","Laem Chabang (LCB)","Songkhla (SGZ)",
+  // Indonesia
+  "Tanjung Priok - Jakarta (JKT)","Tanjung Perak - Surabaya (SUB)","Belawan - Medan (BLW)",
+  "Makassar (UPG)","Batam (BTH)",
+  // Vietnam
+  "Ho Chi Minh City (HCM)","Haiphong (HPH)","Da Nang (DAD)",
+  // Philippines
+  "Manila (MNL)","Cebu (CEB)",
+  // China
+  "Shanghai (SHA)","Yantian / Shenzhen (YTN)","Guangzhou (CAN)","Ningbo (NGB)",
+  "Tianjin (TSN)","Qingdao (TAO)","Xiamen (XMN)","Dalian (DLC)",
+  // Hong Kong
+  "Hong Kong (HKG)",
+  // Taiwan
+  "Kaohsiung (KHH)","Taipei / Keelung (KEL)",
+  // Japan
+  "Tokyo / Yokohama (TYO)","Osaka / Kobe (OSA)",
+  // South Korea
+  "Busan (PUS)",
+  // India
+  "Nhava Sheva / Mumbai (INNSA)","Chennai (INMAA)","Kolkata (INCCU)","Mundra (INMUN)",
+  // Australia
+  "Sydney (SYD)","Melbourne (MEL)","Brisbane (BNE)","Fremantle / Perth (FRE)",
+  // Europe
+  "Rotterdam (RTM)","Antwerp (ANR)","Hamburg (HAM)","Felixstowe (FXT)","Le Havre (LEH)",
+  "Genoa (GOA)","Barcelona (BCN)",
+  // Middle East
+  "Dubai / Jebel Ali (DXB)","Abu Dhabi (AUH)","Dammam (DMA)","Salalah (SLL)",
+  // USA
+  "Los Angeles / Long Beach (LAX)","New York / Newark (NYC)","Houston (HOU)","Savannah (SAV)",
+  "Seattle / Tacoma (SEA)",
+  "Other",
+];
+
+export const AIRPORTS = [
+  // Malaysia
+  "Kuala Lumpur - KLIA (KUL)","Penang (PEN)","Kota Kinabalu (BKI)","Kuching (KCH)",
+  // Singapore
+  "Singapore Changi (SIN)",
+  // Thailand
+  "Bangkok Suvarnabhumi (BKK)","Bangkok Don Mueang (DMK)","Chiang Mai (CNX)",
+  // Indonesia
+  "Jakarta Soekarno-Hatta (CGK)","Surabaya (SUB)","Bali (DPS)","Medan (KNO)",
+  // Vietnam
+  "Ho Chi Minh City (SGN)","Hanoi (HAN)","Da Nang (DAD)",
+  // Philippines
+  "Manila (MNL)","Cebu (CEB)",
+  // China
+  "Beijing (PEK)","Shanghai Pudong (PVG)","Guangzhou (CAN)","Shenzhen (SZX)",
+  "Chengdu (CTU)","Hangzhou (HGH)","Wuhan (WUH)",
+  // Hong Kong
+  "Hong Kong (HKG)",
+  // Taiwan
+  "Taipei Taoyuan (TPE)",
+  // Japan
+  "Tokyo Narita (NRT)","Tokyo Haneda (HND)","Osaka Kansai (KIX)",
+  // South Korea
+  "Seoul Incheon (ICN)",
+  // India
+  "Mumbai (BOM)","Delhi (DEL)","Chennai (MAA)","Bangalore (BLR)",
+  // Australia
+  "Sydney (SYD)","Melbourne (MEL)","Brisbane (BNE)","Perth (PER)",
+  // Europe
+  "London Heathrow (LHR)","London Gatwick (LGW)","Frankfurt (FRA)",
+  "Amsterdam (AMS)","Paris CDG (CDG)","Brussels (BRU)","Zurich (ZRH)",
+  "Milan Malpensa (MXP)","Madrid (MAD)",
+  // Middle East
+  "Dubai (DXB)","Abu Dhabi (AUH)","Doha (DOH)","Riyadh (RUH)",
+  // USA
+  "Los Angeles (LAX)","New York JFK (JFK)","Chicago O'Hare (ORD)","Miami (MIA)",
+  "Houston (IAH)","Dallas (DFW)","Atlanta (ATL)","Seattle (SEA)",
+  "Other",
+];
+
+export const MALAYSIA_STATES = [
+  "Kuala Lumpur","Selangor","Johor","Penang","Perak","Kedah","Kelantan",
+  "Terengganu","Pahang","Negeri Sembilan","Melaka","Perlis",
+  "Sabah","Sarawak","Labuan","Putrajaya",
+];
+
+export const MY_CUSTOMS_STATIONS = [
+  "Port Klang (North Port)","Port Klang (Westport)","Penang Port",
+  "Johor Port","Pasir Gudang","KLIA / KLIA2 (Air Cargo)",
+  "Kuching Port","Bintulu Port","Kota Kinabalu Port",
+  "JB CIQ (Customs, Immigration & Quarantine)","Bukit Kayu Hitam",
+  "Padang Besar","Rantau Panjang","Tumpat","Other",
+];
+
 // ── Sea Freight ──
 export const SEA_FREIGHT_FIELDS: ListingField[] = [
-  { key: "freight_type",      label: "Freight Type",             type: "select",  options: ["FCL","LCL"], required: true, span: "half" },
-  { key: "country_of_origin", label: "Country of Origin",        type: "text",    required: true, placeholder: "e.g. Malaysia", span: "half" },
-  { key: "country_of_destination", label: "Country of Destination", type: "text", required: true, placeholder: "e.g. China",    span: "half" },
-  { key: "port_of_loading",   label: "Port of Loading",          type: "text",    required: true, placeholder: "e.g. Port Klang (PKL)", span: "half" },
-  { key: "port_of_discharge", label: "Port of Discharge",        type: "text",    required: true, placeholder: "e.g. Yantian (YTN)",   span: "half" },
-  { key: "carrier",           label: "Carrier / Shipping Line",  type: "text",    placeholder: "e.g. Maersk, MSC, ONE", span: "half" },
-  { key: "transit_time_days", label: "Transit Time (Days)",      type: "number",  placeholder: "e.g. 7", span: "half" },
-  { key: "routing",           label: "Routing / Via",            type: "text",    placeholder: "e.g. Direct / via Singapore", span: "half" },
-  { key: "container_type",    label: "Container Type",           type: "select",  options: ["20GP","40GP","40HQ","20RF","40RF"], showWhen: { key: "freight_type", value: "FCL" }, span: "half" },
-  { key: "lcl_unit",          label: "LCL Pricing Unit",         type: "select",  options: ["per CBM","per Kg","per CBM (min 1 CBM)"], showWhen: { key: "freight_type", value: "LCL" }, span: "half" },
-  { key: "local_charges_included", label: "Local Charges Included", type: "toggle", span: "half" },
-  { key: "free_time_origin",  label: "Free Time at Origin",      type: "text",    placeholder: "e.g. 7 days", span: "half" },
-  { key: "free_time_destination", label: "Free Time at Destination", type: "text", placeholder: "e.g. 7 days", span: "half" },
-  { key: "limitations",       label: "Limitations / Exclusions", type: "textarea", placeholder: "e.g. Excludes hazardous cargo, out-of-gauge, and live animals", span: "full" },
+  { key: "freight_type",           label: "Freight Type",              type: "select", options: ["FCL","LCL"], required: true, span: "half" },
+  { key: "country_of_origin",      label: "Country of Origin",         type: "select", options: COUNTRIES, required: true, span: "half" },
+  { key: "country_of_destination", label: "Country of Destination",    type: "select", options: COUNTRIES, required: true, span: "half" },
+  { key: "port_of_loading",        label: "Port of Loading",           type: "select", options: SEA_PORTS, required: true, span: "half" },
+  { key: "port_of_discharge",      label: "Port of Discharge",         type: "select", options: SEA_PORTS, required: true, span: "half" },
+  { key: "carrier",                label: "Carrier / Shipping Line",   type: "select", options: ["Maersk","MSC","CMA CGM","ONE","Evergreen","Hapag-Lloyd","Yang Ming","HMM","Wan Hai","PIL","SITC","RCL","Other"], span: "half" },
+  { key: "transit_time_days",      label: "Transit Time (Days)",       type: "number", placeholder: "e.g. 7", span: "half" },
+  { key: "routing",                label: "Routing / Via",             type: "select", options: ["Direct","Via Singapore","Via Port Klang","Via Hong Kong","Via Shanghai","Via Colombo","Via Tanjung Pelepas","Other"], span: "half" },
+  { key: "container_type",         label: "Container Type",            type: "select", options: ["20GP","40GP","40HQ","20RF","40RF"], showWhen: { key: "freight_type", value: "FCL" }, span: "half" },
+  { key: "lcl_unit",               label: "LCL Pricing Unit",          type: "select", options: ["per CBM","per Kg","per CBM (min 1 CBM)"], showWhen: { key: "freight_type", value: "LCL" }, span: "half" },
+  { key: "local_charges_included", label: "Local Charges Included",    type: "toggle", span: "half" },
+  { key: "free_time_origin",       label: "Free Time at Origin",       type: "select", options: ["3 days","5 days","7 days","10 days","14 days","Other"], span: "half" },
+  { key: "free_time_destination",  label: "Free Time at Destination",  type: "select", options: ["3 days","5 days","7 days","10 days","14 days","Other"], span: "half" },
+  { key: "limitations",            label: "Limitations / Exclusions",  type: "textarea", placeholder: "e.g. Excludes hazardous cargo, out-of-gauge, and live animals", span: "full" },
 ];
 
 // ── Air Freight ──
 export const AIR_FREIGHT_FIELDS: ListingField[] = [
-  { key: "country_of_origin",      label: "Country of Origin",         type: "text",   required: true, placeholder: "e.g. Malaysia", span: "half" },
-  { key: "country_of_destination", label: "Country of Destination",    type: "text",   required: true, placeholder: "e.g. United Kingdom", span: "half" },
-  { key: "airport_of_loading",     label: "Airport of Loading (IATA)", type: "text",   required: true, placeholder: "e.g. KUL", span: "half" },
-  { key: "airport_of_discharge",   label: "Airport of Discharge (IATA)", type: "text", required: true, placeholder: "e.g. LHR", span: "half" },
-  { key: "carrier",                label: "Carrier / Airline",         type: "text",   placeholder: "e.g. MAS Kargo, Cathay Cargo", span: "half" },
-  { key: "routing",                label: "Routing / Via",             type: "text",   placeholder: "e.g. Direct / via HKG", span: "half" },
-  { key: "transit_time_days",      label: "Transit Time (Days)",       type: "number", placeholder: "e.g. 3", span: "half" },
-  { key: "volumetric_divisor",     label: "Volumetric Divisor",        type: "select", options: ["5000","6000"], span: "half" },
-  // Weight-break rates
-  { key: "rate_min",       label: "Minimum Rate (flat)",               type: "number", placeholder: "0.00", hint: "Minimum charge per shipment", span: "half" },
-  { key: "rate_minus_45",  label: "Rate < 45 kg (per kg)",            type: "number", placeholder: "0.00", span: "half" },
-  { key: "rate_plus_45",   label: "Rate +45 kg (per kg)",             type: "number", placeholder: "0.00", span: "half" },
-  { key: "rate_plus_100",  label: "Rate +100 kg (per kg)",            type: "number", placeholder: "0.00", span: "half" },
-  { key: "rate_plus_500",  label: "Rate +500 kg (per kg)",            type: "number", placeholder: "0.00", span: "half" },
-  { key: "rate_plus_1000", label: "Rate +1000 kg (per kg)",           type: "number", placeholder: "0.00", span: "half" },
-  { key: "limitations",    label: "Limitations / Exclusions",         type: "textarea", placeholder: "e.g. General cargo only. No live animals, lithium batteries, or DG.", span: "full" },
+  { key: "country_of_origin",      label: "Country of Origin",          type: "select", options: COUNTRIES, required: true, span: "half" },
+  { key: "country_of_destination", label: "Country of Destination",     type: "select", options: COUNTRIES, required: true, span: "half" },
+  { key: "airport_of_loading",     label: "Airport of Loading",         type: "select", options: AIRPORTS,  required: true, span: "half" },
+  { key: "airport_of_discharge",   label: "Airport of Discharge",       type: "select", options: AIRPORTS,  required: true, span: "half" },
+  { key: "carrier",                label: "Carrier / Airline",          type: "select", options: ["MAS Kargo","Cathay Cargo","Singapore Airlines Cargo","Emirates SkyCargo","Qatar Airways Cargo","Lufthansa Cargo","Korean Air Cargo","China Airlines Cargo","EVA Air Cargo","Thai Airways Cargo","Scoot (Budget Air Cargo)","Other"], span: "half" },
+  { key: "routing",                label: "Routing / Via",              type: "select", options: ["Direct","Via Singapore (SIN)","Via Hong Kong (HKG)","Via Guangzhou (CAN)","Via Bangkok (BKK)","Via Dubai (DXB)","Other"], span: "half" },
+  { key: "transit_time_days",      label: "Transit Time (Days)",        type: "number", placeholder: "e.g. 3", span: "half" },
+  { key: "volumetric_divisor",     label: "Volumetric Divisor",         type: "select", options: ["5000","6000"], span: "half" },
+  { key: "rate_min",       label: "Minimum Rate (flat)",                type: "number", placeholder: "0.00", hint: "Minimum charge per shipment", span: "half" },
+  { key: "rate_minus_45",  label: "Rate < 45 kg (per kg)",             type: "number", placeholder: "0.00", span: "half" },
+  { key: "rate_plus_45",   label: "Rate +45 kg (per kg)",              type: "number", placeholder: "0.00", span: "half" },
+  { key: "rate_plus_100",  label: "Rate +100 kg (per kg)",             type: "number", placeholder: "0.00", span: "half" },
+  { key: "rate_plus_500",  label: "Rate +500 kg (per kg)",             type: "number", placeholder: "0.00", span: "half" },
+  { key: "rate_plus_1000", label: "Rate +1000 kg (per kg)",            type: "number", placeholder: "0.00", span: "half" },
+  { key: "limitations",    label: "Limitations / Exclusions",          type: "textarea", placeholder: "e.g. General cargo only. No live animals, lithium batteries, or DG.", span: "full" },
 ];
 
 // ── Courier ──
 export const COURIER_FIELDS: ListingField[] = [
-  { key: "country_of_origin",      label: "Country of Origin",      type: "text",   required: true, placeholder: "e.g. Malaysia", span: "half" },
-  { key: "country_of_destination", label: "Country of Destination", type: "text",   required: true, placeholder: "e.g. Australia", span: "half" },
+  { key: "country_of_origin",      label: "Country of Origin",      type: "select", options: COUNTRIES, required: true, span: "half" },
+  { key: "country_of_destination", label: "Country of Destination", type: "select", options: COUNTRIES, required: true, span: "half" },
   { key: "service_level",          label: "Service Level",          type: "select", options: ["Economy","Express","Same Day","Next Day"], required: true, span: "half" },
   { key: "max_weight_per_parcel_kg", label: "Max Weight per Parcel (kg)", type: "number", placeholder: "e.g. 30", span: "half" },
   { key: "max_dimension",          label: "Max Dimensions (cm)",    type: "text",   placeholder: "e.g. 100 x 80 x 60 cm", span: "half" },
@@ -126,8 +233,8 @@ export const COURIER_FIELDS: ListingField[] = [
 
 // ── Small Parcel ──
 export const SMALL_PARCEL_FIELDS: ListingField[] = [
-  { key: "country_of_origin",      label: "Country of Origin",      type: "text",   required: true, placeholder: "e.g. Malaysia", span: "half" },
-  { key: "country_of_destination", label: "Country of Destination", type: "text",   required: true, placeholder: "e.g. Singapore", span: "half" },
+  { key: "country_of_origin",      label: "Country of Origin",      type: "select", options: COUNTRIES, required: true, span: "half" },
+  { key: "country_of_destination", label: "Country of Destination", type: "select", options: COUNTRIES, required: true, span: "half" },
   { key: "pickup_postcode",        label: "Pickup Postcode / Area",  type: "text",   placeholder: "e.g. 50000 (KL) or All Malaysia", span: "half" },
   { key: "delivery_postcode",      label: "Delivery Postcode / Area", type: "text",  placeholder: "e.g. All Singapore", span: "half" },
   { key: "service_level",          label: "Service Level",          type: "select", options: ["Economy","Express","Standard"], required: true, span: "half" },
@@ -140,9 +247,9 @@ export const SMALL_PARCEL_FIELDS: ListingField[] = [
 
 // ── Transport ──
 export const TRANSPORT_FIELDS: ListingField[] = [
-  { key: "country_of_origin",         label: "Country",             type: "text",   required: true, placeholder: "e.g. Malaysia", span: "half" },
-  { key: "pickup_area",               label: "Pickup Area / State", type: "text",   required: true, placeholder: "e.g. Klang Valley", span: "half" },
-  { key: "delivery_area",             label: "Delivery Area / State", type: "text", required: true, placeholder: "e.g. Johor Bahru", span: "half" },
+  { key: "country_of_origin",         label: "Country",             type: "select", options: COUNTRIES, required: true, span: "half" },
+  { key: "pickup_area",               label: "Pickup Area / State", type: "select", options: [...MALAYSIA_STATES,"Other"], required: true, span: "half" },
+  { key: "delivery_area",             label: "Delivery Area / State", type: "select", options: [...MALAYSIA_STATES,"Other"], required: true, span: "half" },
   { key: "truck_size",                label: "Truck Size",          type: "select", options: ["1 Ton","3 Ton","5 Ton","8 Ton","10 Ton","40 Foot Trailer"], required: true, span: "half" },
   { key: "truck_type",                label: "Truck Body Type",     type: "select", options: ["Box Truck","Open Truck","Crane Truck","Side Curtain","Bonded Truck","Refrigerated Truck"], required: true, span: "half" },
   { key: "pricing_unit",              label: "Pricing Unit",        type: "select", options: ["per trip","per day","per kg","per km"], span: "half" },
@@ -154,14 +261,14 @@ export const TRANSPORT_FIELDS: ListingField[] = [
 
 // ── Console Truck ──
 export const CONSOLE_TRUCK_FIELDS: ListingField[] = [
-  { key: "country_of_origin",        label: "Origin Country",           type: "text",   required: true, placeholder: "e.g. Malaysia", span: "half" },
-  { key: "country_of_destination",   label: "Destination Country",      type: "text",   required: true, placeholder: "e.g. Thailand", span: "half" },
+  { key: "country_of_origin",        label: "Origin Country",           type: "select", options: COUNTRIES, required: true, span: "half" },
+  { key: "country_of_destination",   label: "Destination Country",      type: "select", options: COUNTRIES, required: true, span: "half" },
   { key: "origin_warehouse",         label: "Origin Warehouse / Hub",   type: "text",   required: true, placeholder: "e.g. Klang Warehouse, Selangor", span: "half" },
   { key: "origin_postcode",          label: "Origin Postcode",          type: "text",   placeholder: "e.g. 41000", span: "half" },
   { key: "destination_warehouse",    label: "Destination Warehouse / Hub", type: "text", required: true, placeholder: "e.g. Lat Krabang Warehouse, Bangkok", span: "half" },
   { key: "destination_postcode",     label: "Destination Postcode",     type: "text",   placeholder: "e.g. 10520", span: "half" },
-  { key: "schedule",                 label: "Departure Schedule",       type: "text",   required: true, placeholder: "e.g. Every Monday & Thursday", span: "half" },
-  { key: "cutoff_time",              label: "Cargo Cutoff Time",        type: "text",   required: true, placeholder: "e.g. Friday 5:00 PM", span: "half" },
+  { key: "schedule",                 label: "Departure Schedule",       type: "select", options: ["Daily","Every Monday","Every Tuesday","Every Wednesday","Every Thursday","Every Friday","Mon & Thu","Tue & Fri","Mon, Wed & Fri","Weekly","Other"], required: true, span: "half" },
+  { key: "cutoff_time",              label: "Cargo Cutoff",             type: "select", options: ["Day before 12:00 PM","Day before 5:00 PM","Day before 6:00 PM","Same day 9:00 AM","Same day 12:00 PM","Other"], required: true, span: "half" },
   { key: "transit_time_days",        label: "Transit Time (Days)",      type: "number", placeholder: "e.g. 3", span: "half" },
   { key: "pricing_unit",             label: "Pricing Unit",             type: "select", options: ["per kg","per CBM","per pallet","per carton"], required: true, span: "half" },
   { key: "minimum_charge",           label: "Minimum Charge",           type: "number", placeholder: "e.g. 50.00", span: "half" },
@@ -172,10 +279,10 @@ export const CONSOLE_TRUCK_FIELDS: ListingField[] = [
 
 // ── Custom Broker ──
 export const CUSTOM_BROKER_FIELDS: ListingField[] = [
-  { key: "country",                       label: "Country",                       type: "text",   required: true, placeholder: "e.g. Malaysia", span: "half" },
-  { key: "clearance_station",             label: "Clearance Station / Port",      type: "text",   required: true, placeholder: "e.g. Port Klang, KLIA, JB CIQ", span: "half" },
+  { key: "country",                       label: "Country",                       type: "select", options: COUNTRIES, required: true, span: "half" },
+  { key: "clearance_station",             label: "Clearance Station / Port",      type: "select", options: MY_CUSTOMS_STATIONS, required: true, span: "half" },
   { key: "import_export",                 label: "Import / Export",               type: "select", options: ["Import","Export","Both"], required: true, span: "half" },
-  { key: "declaration_type",              label: "Declaration Type(s)",           type: "text",   required: true, placeholder: "e.g. K1, K2, K8 or All", span: "half" },
+  { key: "declaration_type",              label: "Declaration Type(s)",           type: "select", options: ["K1 (Import)","K2 (Export)","K8 (In-Transit)","K1 + K2","K1 + K2 + K8 (All)","Other"], required: true, span: "half" },
   { key: "pricing_unit",                  label: "Pricing Unit",                  type: "select", options: ["per declaration","per HS code","per invoice","per shipment","per permit"], required: true, span: "half" },
   { key: "permit_handling_available",     label: "Permit Handling (AP / OGA)",    type: "toggle", span: "half" },
   { key: "inspection_support_available",  label: "Customs Inspection Support",    type: "toggle", span: "half" },

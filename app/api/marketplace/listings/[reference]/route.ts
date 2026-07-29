@@ -1,117 +1,75 @@
-// GET   /api/marketplace/listings/[reference]  — listing detail
-// PATCH /api/marketplace/listings/[reference]  — update listing (provider draft / admin any)
+// GET   /api/marketplace/listings/[reference]
+// PATCH /api/marketplace/listings/[reference]
 
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-
-const SUPA_URL  = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPA_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const SUPA_SVC  = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
-function admin() {
-  return createClient(SUPA_URL, SUPA_SVC, { auth: { persistSession: false } });
-}
-
-async function verifyToken(req: NextRequest) {
-  const token = req.headers.get("authorization")?.replace("Bearer ", "").trim() ?? "";
-  if (!token) return null;
-  const anon = createClient(SUPA_URL, SUPA_ANON, { auth: { persistSession: false } });
-  const { data: { user }, error } = await anon.auth.getUser(token);
-  if (error || !user) return null;
-  const { data: profile } = await admin()
-    .from("profiles")
-    .select("id, role, company_id")
-    .eq("id", user.id)
-    .single();
-  return profile ? { ...profile, userId: user.id } : null;
-}
+import { verifyAuth, adminClient, isAdmin, isProvider, isCustomer } from "@/lib/apiAuth";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ reference: string }> }) {
   const { reference } = await params;
-  const profile = await verifyToken(req);
-  if (!profile) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  const auth = await verifyAuth(req);
+  if (!auth) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
 
-  const db = admin();
+  const db = adminClient();
   const { data: listing, error } = await db
     .from("service_listings")
-    .select("*, provider_company:companies!provider_company_id(name, country)")
+    .select("*, provider_company:companies!provider_company_id(name, country), service_listing_details(detail_json)")
     .eq("listing_reference", reference)
     .single();
 
-  if (error || !listing) return NextResponse.json({ ok: false, error: "Listing not found" }, { status: 404 });
+  if (error || !listing) return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
 
-  // Customer can only see Approved listings
-  if (profile.role === "customer" && listing.listing_status !== "Approved") {
-    return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
-  }
-  // Provider can only see own
-  if (profile.role === "service_provider" && listing.provider_company_id !== profile.company_id) {
+  const l = listing as Record<string, unknown>;
+  if (isCustomer(auth) && l.status !== "Live")    return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
+  if (isProvider(auth) && l.provider_company_id !== auth.company_id)
     return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
-  }
 
-  // Fetch customer requests for this listing (provider & admin only)
-  let requests = null;
-  if (profile.role === "service_provider" || profile.role === "admin") {
-    const { data } = await db
-      .from("service_customer_requests")
-      .select("*")
-      .eq("listing_id", listing.id)
-      .order("created_at", { ascending: false });
-    requests = data ?? [];
-  }
-
-  return NextResponse.json({ ok: true, listing, requests });
+  const details = (l.service_listing_details as { detail_json: unknown }[] | null)?.[0];
+  return NextResponse.json({ ok: true, listing: { ...l, detail_json: details?.detail_json ?? null, service_listing_details: undefined } });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ reference: string }> }) {
   const { reference } = await params;
-  const profile = await verifyToken(req);
-  if (!profile) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  const auth = await verifyAuth(req);
+  if (!auth) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
 
-  const db = admin();
+  const db = adminClient();
   const { data: existing, error: fetchErr } = await db
     .from("service_listings")
-    .select("id, provider_company_id, listing_status")
+    .select("id, provider_company_id, status")
     .eq("listing_reference", reference)
     .single();
 
-  if (fetchErr || !existing) return NextResponse.json({ ok: false, error: "Listing not found" }, { status: 404 });
+  if (fetchErr || !existing) return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
 
   const body = await req.json() as Record<string, unknown>;
-  const isAdmin    = profile.role === "admin";
-  const isProvider = profile.role === "service_provider" && existing.provider_company_id === profile.company_id;
+  const ex   = existing as { id: string; provider_company_id: string; status: string };
 
-  if (!isAdmin && !isProvider) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+  const isOwnListing = isProvider(auth) && ex.provider_company_id === auth.company_id;
+  if (!isAdmin(auth) && !isOwnListing) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
 
-  // Provider can only edit Draft/Rejected listings
-  if (isProvider && !["Draft", "Rejected"].includes(existing.listing_status as string)) {
-    return NextResponse.json({ ok: false, error: "Cannot edit a listing that is not in Draft or Rejected state" }, { status: 403 });
-  }
+  if (isOwnListing && !["Draft","Rejected"].includes(ex.status))
+    return NextResponse.json({ ok: false, error: "Can only edit Draft or Rejected listings" }, { status: 403 });
 
-  // Build update payload — admin can change status, provider cannot
-  const allowedProviderFields = new Set([
-    "title", "description", "service_scope", "service_modes", "certifications",
-    "languages_supported", "pricing_model", "base_price", "currency",
-    "service_details", "available_from", "available_until",
-  ]);
+  const PROVIDER_FIELDS = new Set(["listing_title","description","cargo_type","currency","validity_from","validity_to","remarks"]);
+
   const update: Record<string, unknown> = {};
-
-  if (isAdmin) {
-    // Admin can patch anything
-    for (const key of Object.keys(body)) update[key] = body[key];
+  if (isAdmin(auth)) {
+    for (const k of Object.keys(body)) if (k !== "detail_json") update[k] = body[k];
   } else {
-    for (const key of Object.keys(body)) {
-      if (allowedProviderFields.has(key)) update[key] = body[key];
-    }
-    // Provider submitting for review
-    if (body.submit_for_review === true) update["listing_status"] = "Pending Review";
+    for (const k of Object.keys(body)) if (PROVIDER_FIELDS.has(k)) update[k] = body[k];
+    if (body.submit_for_review) { update.status = "Pending Review"; update.admin_review_status = "Pending Review"; }
   }
 
-  const { error } = await db
-    .from("service_listings")
-    .update(update)
-    .eq("id", existing.id);
+  if (Object.keys(update).length) {
+    const { error } = await db.from("service_listings").update(update).eq("id", ex.id);
+    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  }
 
-  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  // Update detail_json if provided
+  if (body.detail_json && typeof body.detail_json === "object") {
+    await db.from("service_listing_details")
+      .upsert({ service_listing_id: ex.id, detail_json: body.detail_json }, { onConflict: "service_listing_id" });
+  }
+
   return NextResponse.json({ ok: true });
 }

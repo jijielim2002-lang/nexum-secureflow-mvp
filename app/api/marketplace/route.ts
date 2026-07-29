@@ -1,94 +1,81 @@
-// GET  /api/marketplace  — list listings (role-filtered)
-// POST /api/marketplace  — provider creates a new listing
+// GET  /api/marketplace  — list service_listings (role-filtered)
+// POST /api/marketplace  — provider creates a listing (Draft → Pending Review)
 
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-
-const SUPA_URL  = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPA_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const SUPA_SVC  = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
-function admin() {
-  return createClient(SUPA_URL, SUPA_SVC, { auth: { persistSession: false } });
-}
-
-async function verifyToken(req: NextRequest) {
-  const token = req.headers.get("authorization")?.replace("Bearer ", "").trim() ?? "";
-  if (!token) return null;
-  const anon = createClient(SUPA_URL, SUPA_ANON, { auth: { persistSession: false } });
-  const { data: { user }, error } = await anon.auth.getUser(token);
-  if (error || !user) return null;
-  const { data: profile } = await admin()
-    .from("profiles")
-    .select("id, role, company_id")
-    .eq("id", user.id)
-    .single();
-  return profile ? { ...profile, userId: user.id } : null;
-}
+import { verifyAuth, adminClient, isAdmin, isProvider, isCustomer } from "@/lib/apiAuth";
 
 export async function GET(req: NextRequest) {
-  const profile = await verifyToken(req);
-  if (!profile) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  const auth = await verifyAuth(req);
+  if (!auth) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
 
-  const db = admin();
-  let query = db
+  const db  = adminClient();
+  const url = new URL(req.url);
+  const cat = url.searchParams.get("category");
+
+  let q = db
     .from("service_listings")
-    .select("*, provider_company:companies!provider_company_id(name, country)")
+    .select("*, provider_company:companies!provider_company_id(name, country), service_listing_details(detail_json)")
     .order("created_at", { ascending: false });
 
-  if (profile.role === "customer") {
-    query = query.eq("listing_status", "Approved").eq("is_active", true);
-  } else if (profile.role === "service_provider") {
-    query = query.eq("provider_company_id", profile.company_id);
-  }
+  if (isCustomer(auth))  q = q.eq("status", "Live");
+  else if (isProvider(auth)) q = q.eq("provider_company_id", auth.company_id!);
   // admin sees all
 
-  const url = new URL(req.url);
-  const serviceType = url.searchParams.get("service_type");
-  if (serviceType) query = query.eq("service_type", serviceType);
+  if (cat) q = q.eq("service_category", cat);
 
-  const { data, error } = await query;
+  const { data, error } = await q;
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  return NextResponse.json({ ok: true, listings: data ?? [] });
+
+  // Flatten detail_json into listings
+  const listings = (data ?? []).map((l: Record<string, unknown>) => {
+    const details = (l.service_listing_details as { detail_json: unknown }[] | null)?.[0];
+    return { ...l, detail_json: details?.detail_json ?? null, service_listing_details: undefined };
+  });
+
+  return NextResponse.json({ ok: true, listings });
 }
 
 export async function POST(req: NextRequest) {
-  const profile = await verifyToken(req);
-  if (!profile) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (profile.role !== "service_provider" && profile.role !== "admin") {
-    return NextResponse.json({ ok: false, error: "Only service providers can create listings" }, { status: 403 });
-  }
+  const auth = await verifyAuth(req);
+  if (!auth) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (!isProvider(auth) && !isAdmin(auth))
+    return NextResponse.json({ ok: false, error: "Providers only" }, { status: 403 });
 
   const body = await req.json() as Record<string, unknown>;
-  const db = admin();
+  const db   = adminClient();
 
-  // Generate reference
-  const { data: refData, error: refErr } = await db.rpc("generate_service_reference");
+  const { data: refData, error: refErr } = await db.rpc("generate_listing_reference");
   if (refErr || !refData) return NextResponse.json({ ok: false, error: "Failed to generate reference" }, { status: 500 });
 
-  const { data, error } = await db
+  const { data: listing, error: lErr } = await db
     .from("service_listings")
     .insert({
       listing_reference:   refData as string,
-      provider_company_id: profile.company_id,
-      service_type:        body.service_type,
-      title:               body.title,
-      description:         body.description        ?? null,
-      service_scope:       body.service_scope       ?? null,
-      service_modes:       body.service_modes       ?? null,
-      certifications:      body.certifications      ?? null,
-      languages_supported: body.languages_supported ?? null,
-      pricing_model:       body.pricing_model       ?? null,
-      base_price:          body.base_price          ?? null,
-      currency:            body.currency            ?? "USD",
-      service_details:     body.service_details     ?? null,
-      available_from:      body.available_from      ?? null,
-      available_until:     body.available_until     ?? null,
-      listing_status:      "Pending Review",
+      provider_company_id: auth.company_id!,
+      created_by:          auth.userId,
+      service_category:    body.service_category,
+      listing_title:       body.listing_title,
+      description:         body.description         ?? null,
+      cargo_type:          body.cargo_type           ?? "General Cargo",
+      currency:            body.currency             ?? "USD",
+      validity_from:       body.validity_from        ?? null,
+      validity_to:         body.validity_to          ?? null,
+      remarks:             body.remarks              ?? null,
+      status:              body.submit_for_review ? "Pending Review" : "Draft",
+      admin_review_status: "Pending Review",
     })
-    .select("listing_reference")
+    .select("id, listing_reference")
     .single();
 
-  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  return NextResponse.json({ ok: true, listing_reference: (data as { listing_reference: string }).listing_reference });
+  if (lErr || !listing) return NextResponse.json({ ok: false, error: lErr?.message ?? "Insert failed" }, { status: 500 });
+
+  // Insert detail_json if provided
+  if (body.detail_json && typeof body.detail_json === "object") {
+    await db.from("service_listing_details").insert({
+      service_listing_id: (listing as { id: string }).id,
+      detail_json:        body.detail_json,
+    });
+  }
+
+  return NextResponse.json({ ok: true, listing_reference: (listing as { listing_reference: string }).listing_reference });
 }

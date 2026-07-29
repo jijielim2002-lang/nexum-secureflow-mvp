@@ -1,262 +1,233 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { AdminNav } from "@/components/AdminNav";
-import {
-  type ServiceListing,
-  type ServiceCustomerRequest,
-  listingStatusColor,
-  requestStatusColor,
-  formatPrice,
-  SERVICE_TYPE_ICON,
-} from "@/lib/marketplace";
+import { listingStatusColor, rfqStatusColor, LISTING_STATUSES, type ServiceCategory } from "@/lib/marketplace";
 
-type Tab = "listings" | "requests";
-type ListingFilter = "all" | "Pending Review" | "Approved" | "Rejected" | "Suspended";
+async function getToken() {
+  const { supabase } = await import("@/lib/supabaseClient");
+  const { data: { session } } = await supabase.auth.getSession();
+  return session?.access_token ?? "";
+}
+
+interface Listing {
+  id: string; listing_reference: string; service_category: ServiceCategory;
+  listing_title?: string; status: string; admin_review_status?: string;
+  currency?: string; validity_to?: string; review_note?: string;
+  provider_company?: { name?: string; country?: string };
+}
+interface RFQ {
+  id: string; rfq_reference: string; service_category: string;
+  origin_country?: string; destination_country?: string; rfq_status: string;
+  created_at: string;
+  customer_company?: { name?: string };
+}
+
+type Tab = "listings" | "rfqs";
+type ListingAction = "approve" | "go_live" | "reject" | "suspend" | "expire";
 
 export default function AdminMarketplacePage() {
-  const [tab,      setTab]      = useState<Tab>("listings");
-  const [listings, setListings] = useState<ServiceListing[]>([]);
-  const [requests, setRequests] = useState<ServiceCustomerRequest[]>([]);
-  const [loading,  setLoading]  = useState(true);
-  const [filter,   setFilter]   = useState<ListingFilter>("all");
-  const [acting,   setActing]   = useState<string | null>(null);
+  const [tab,       setTab]       = useState<Tab>("listings");
+  const [listings,  setListings]  = useState<Listing[]>([]);
+  const [rfqs,      setRfqs]      = useState<RFQ[]>([]);
+  const [loading,   setLoading]   = useState(true);
+  const [err,       setErr]       = useState("");
+  const [statusFlt, setStatusFlt] = useState("Pending Review");
+  const [rejectRef, setRejectRef] = useState<string | null>(null);
+  const [rejectNote,setRejectNote]= useState("");
+  const [acting,    setActing]    = useState("");
 
-  // Approve form state
-  const [approveRef,    setApproveRef]    = useState<string | null>(null);
-  const [commission,    setCommission]    = useState("7.5");
-  const [adminNotes,    setAdminNotes]    = useState("");
-  const [rejectReason,  setRejectReason]  = useState("");
-
-  async function getToken() {
-    const { supabase } = await import("@/lib/supabaseClient");
-    const { data: { session } } = await supabase.auth.getSession();
-    return session?.access_token
-      ?? (() => { try { const s = localStorage.getItem("supabase.auth.token"); return s ? (JSON.parse(s) as { access_token?: string }).access_token : null; } catch { return null; } })();
-  }
-
-  async function load() {
-    const token = await getToken();
-    const [lRes, rRes] = await Promise.all([
-      fetch("/api/marketplace",         { headers: { Authorization: `Bearer ${token ?? ""}` } }),
-      fetch("/api/marketplace/request", { headers: { Authorization: `Bearer ${token ?? ""}` } }),
-    ]);
-    const lJson = await lRes.json() as { ok?: boolean; listings?: ServiceListing[] };
-    const rJson = await rRes.json() as { ok?: boolean; requests?: ServiceCustomerRequest[] };
-    if (lJson.ok) setListings(lJson.listings ?? []);
-    if (rJson.ok) setRequests(rJson.requests ?? []);
+  const loadListings = useCallback(async () => {
+    setLoading(true); setErr("");
+    const res  = await fetch("/api/marketplace", { headers: { Authorization: `Bearer ${await getToken()}` } });
+    const json = await res.json() as { ok?: boolean; listings?: Listing[]; error?: string };
+    if (json.ok) setListings(json.listings ?? []);
+    else setErr(json.error ?? "Failed");
     setLoading(false);
-  }
+  }, []);
 
-  useEffect(() => { void load(); }, []);
+  const loadRFQs = useCallback(async () => {
+    setLoading(true); setErr("");
+    const res  = await fetch("/api/marketplace/rfqs", { headers: { Authorization: `Bearer ${await getToken()}` } });
+    const json = await res.json() as { ok?: boolean; rfqs?: RFQ[]; error?: string };
+    if (json.ok) setRfqs(json.rfqs ?? []);
+    else setErr(json.error ?? "Failed");
+    setLoading(false);
+  }, []);
 
-  async function handleApprovalAction(action: "approve" | "reject" | "suspend", ref: string) {
-    setActing(ref);
-    const token = await getToken();
+  useEffect(() => { if (tab === "listings") void loadListings(); else void loadRFQs(); }, [tab, loadListings, loadRFQs]);
+
+  async function doAction(listing_reference: string, action: ListingAction, note?: string) {
+    setActing(listing_reference + action);
     await fetch("/api/marketplace/approve", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token ?? ""}` },
-      body: JSON.stringify({
-        listing_reference: ref,
-        action,
-        admin_notes:      adminNotes      || null,
-        rejection_reason: rejectReason    || null,
-        commission_rate:  action === "approve" ? parseFloat(commission) : undefined,
-      }),
+      method:  "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${await getToken()}` },
+      body:    JSON.stringify({ listing_reference, action, review_note: note ?? null }),
     });
-    setApproveRef(null);
-    setAdminNotes(""); setRejectReason(""); setCommission("7.5");
-    await load();
-    setActing(null);
+    setRejectRef(null); setRejectNote(""); setActing("");
+    await loadListings();
   }
 
-  const filteredListings = listings.filter(l =>
-    filter === "all" || l.listing_status === filter
-  );
-
-  const pendingCount = listings.filter(l => l.listing_status === "Pending Review").length;
+  const filteredListings = statusFlt === "All" ? listings : listings.filter(l => l.status === statusFlt);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans flex flex-col">
-      <AdminNav currentPage="marketplace" />
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
+      <AdminNav />
 
-      <main className="mx-auto w-full max-w-7xl px-6 py-10">
-        <div className="mb-8">
-          <div className="flex items-center gap-2 mb-1">
-            <h1 className="text-2xl font-bold text-slate-50">Service Marketplace</h1>
-            {pendingCount > 0 && (
-              <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-0.5 text-xs font-semibold text-amber-400">
-                {pendingCount} pending
-              </span>
-            )}
-          </div>
-          <p className="text-sm text-slate-400">Review provider listings and monitor customer service requests.</p>
+      <main className="mx-auto max-w-7xl px-6 py-10">
+        <div className="mb-6">
+          <h1 className="text-xl font-bold text-slate-50">Marketplace Administration</h1>
+          <p className="text-sm text-slate-400 mt-0.5">Review service listings and monitor RFQ activity</p>
         </div>
 
-        {/* Tabs */}
-        <div className="flex items-center gap-1 mb-6 border-b border-slate-800 pb-1">
-          {(["listings", "requests"] as Tab[]).map(t => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors capitalize ${
-                tab === t
-                  ? "border-b-2 border-blue-500 text-blue-300"
-                  : "text-slate-500 hover:text-slate-300"
-              }`}
-            >
-              {t} {t === "requests" && requests.length > 0 ? `(${requests.length})` : ""}
+        {/* Tab bar */}
+        <div className="flex gap-1 mb-6 border-b border-slate-800">
+          {(["listings","rfqs"] as Tab[]).map(t => (
+            <button key={t} type="button" onClick={() => setTab(t)}
+              className={`px-5 py-2.5 text-sm font-medium transition-colors ${tab === t ? "text-blue-400 border-b-2 border-blue-500 -mb-px" : "text-slate-500 hover:text-slate-300"}`}>
+              {t === "listings" ? "Service Listings" : "RFQs / Tenders"}
             </button>
           ))}
         </div>
 
-        {loading && (
-          <div className="py-20 text-center">
-            <div className="inline-block h-7 w-7 animate-spin rounded-full border-2 border-blue-500 border-t-transparent mb-4" />
-            <p className="text-sm text-slate-400">Loading…</p>
-          </div>
-        )}
-
-        {/* ── Listings tab ── */}
-        {!loading && tab === "listings" && (
-          <div>
-            {/* Filter strip */}
-            <div className="flex items-center gap-2 mb-5">
-              {(["all", "Pending Review", "Approved", "Rejected", "Suspended"] as ListingFilter[]).map(f => (
-                <button
-                  key={f}
-                  onClick={() => setFilter(f)}
-                  className={`rounded-full border px-3 py-1 text-xs transition-colors capitalize ${
-                    filter === f ? "border-blue-500 bg-blue-500/15 text-blue-300" : "border-slate-700 text-slate-400 hover:border-slate-600"
-                  }`}
-                >
-                  {f === "all" ? "All" : f}
-                  {f === "Pending Review" && pendingCount > 0 ? ` (${pendingCount})` : ""}
-                </button>
+        {/* Listings tab */}
+        {tab === "listings" && (
+          <>
+            <div className="flex gap-2 flex-wrap mb-4">
+              {["All", "Pending Review", ...LISTING_STATUSES.filter(s => !["Pending Review","Draft"].includes(s))].map(s => (
+                <button key={s} type="button" onClick={() => setStatusFlt(s)}
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${statusFlt === s ? "bg-blue-600 text-white" : "border border-slate-700 text-slate-400 hover:border-slate-500"}`}>{s}</button>
               ))}
             </div>
 
-            {filteredListings.length === 0 ? (
-              <div className="py-16 text-center text-sm text-slate-500">No listings in this category.</div>
-            ) : (
-              <div className="space-y-3">
-                {filteredListings.map(l => (
-                  <div key={l.id} className="rounded-xl border border-slate-800 bg-slate-900/40">
-                    <div className="flex items-start justify-between gap-4 px-6 py-5">
-                      <div className="flex items-start gap-3 flex-1 min-w-0">
-                        <span className="text-xl mt-0.5">{SERVICE_TYPE_ICON[l.service_type as keyof typeof SERVICE_TYPE_ICON] ?? "🔧"}</span>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="font-mono text-xs text-slate-500">{l.listing_reference}</span>
-                            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${listingStatusColor(l.listing_status)}`}>{l.listing_status}</span>
+            <div className="overflow-x-auto rounded-xl border border-slate-800">
+              {loading ? (
+                <div className="py-16 text-center text-sm text-slate-500">Loading…</div>
+              ) : err ? (
+                <div className="py-10 text-center text-sm text-red-400">{err}</div>
+              ) : filteredListings.length === 0 ? (
+                <div className="py-16 text-center text-sm text-slate-500">No listings with status: {statusFlt}</div>
+              ) : (
+                <table className="w-full text-sm text-slate-300">
+                  <thead className="border-b border-slate-800 text-left text-xs text-slate-500">
+                    <tr>
+                      <th className="px-4 py-3 font-medium">Reference</th>
+                      <th className="px-4 py-3 font-medium">Provider</th>
+                      <th className="px-4 py-3 font-medium">Category</th>
+                      <th className="px-4 py-3 font-medium">Title</th>
+                      <th className="px-4 py-3 font-medium">Status</th>
+                      <th className="px-4 py-3 font-medium">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60">
+                    {filteredListings.map(l => (
+                      <tr key={l.id} className="hover:bg-slate-800/30 transition-colors">
+                        <td className="px-4 py-3 font-mono text-xs text-slate-400">{l.listing_reference}</td>
+                        <td className="px-4 py-3 text-xs">{l.provider_company?.name ?? "—"}</td>
+                        <td className="px-4 py-3 text-xs">{l.service_category}</td>
+                        <td className="px-4 py-3 max-w-xs truncate">{l.listing_title ?? "—"}</td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${listingStatusColor(l.status)}`}>{l.status}</span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex gap-1.5 flex-wrap">
+                            {l.status === "Pending Review" && (
+                              <>
+                                <button onClick={() => doAction(l.listing_reference, "approve")} disabled={!!acting}
+                                  className="rounded px-2.5 py-1 text-[11px] border border-blue-600/40 text-blue-400 hover:bg-blue-600/10 disabled:opacity-40 transition-colors">
+                                  Approve
+                                </button>
+                                <button onClick={() => setRejectRef(l.listing_reference)}
+                                  className="rounded px-2.5 py-1 text-[11px] border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-colors">
+                                  Reject
+                                </button>
+                              </>
+                            )}
+                            {l.status === "Approved" && (
+                              <button onClick={() => doAction(l.listing_reference, "go_live")} disabled={!!acting}
+                                className="rounded px-2.5 py-1 text-[11px] border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-40 transition-colors">
+                                Go Live
+                              </button>
+                            )}
+                            {l.status === "Live" && (
+                              <button onClick={() => doAction(l.listing_reference, "suspend")} disabled={!!acting}
+                                className="rounded px-2.5 py-1 text-[11px] border border-amber-500/40 text-amber-400 hover:bg-amber-500/10 disabled:opacity-40 transition-colors">
+                                Suspend
+                              </button>
+                            )}
+                            {["Live","Approved","Suspended"].includes(l.status) && (
+                              <button onClick={() => doAction(l.listing_reference, "expire")} disabled={!!acting}
+                                className="rounded px-2.5 py-1 text-[11px] border border-slate-600 text-slate-500 hover:bg-slate-800 disabled:opacity-40 transition-colors">
+                                Expire
+                              </button>
+                            )}
                           </div>
-                          <p className="text-sm font-semibold text-slate-100 truncate">{l.title}</p>
-                          <p className="text-xs text-slate-400">{l.service_type} · {(l.provider_company as { name?: string } | null)?.name ?? "—"}</p>
-                          {l.admin_notes && <p className="text-xs text-slate-500 mt-1 italic">Note: {l.admin_notes}</p>}
-                          {l.rejection_reason && <p className="text-xs text-red-400 mt-1">Rejected: {l.rejection_reason}</p>}
-                          {l.commission_rate != null && <p className="text-xs text-emerald-400 mt-1">Commission: {l.commission_rate}%</p>}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <p className="text-sm font-bold mr-3">{formatPrice(l.base_price, l.currency)}</p>
-                        {l.listing_status === "Pending Review" && (
-                          <button
-                            onClick={() => setApproveRef(l.listing_reference)}
-                            className="rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-1.5 text-xs text-blue-400 hover:bg-blue-500/20 transition-colors"
-                          >
-                            Review
-                          </button>
-                        )}
-                        {l.listing_status === "Approved" && (
-                          <button
-                            onClick={() => handleApprovalAction("suspend", l.listing_reference)}
-                            disabled={acting === l.listing_reference}
-                            className="rounded-lg border border-orange-500/40 bg-orange-500/10 px-3 py-1.5 text-xs text-orange-400 hover:bg-orange-500/20 transition-colors disabled:opacity-40"
-                          >
-                            Suspend
-                          </button>
-                        )}
-                      </div>
-                    </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </>
+        )}
 
-                    {/* Inline approval form */}
-                    {approveRef === l.listing_reference && (
-                      <div className="border-t border-slate-700/60 px-6 py-4 bg-slate-900/60">
-                        <p className="text-xs font-semibold text-slate-300 mb-3">Review: {l.title}</p>
-                        <div className="grid grid-cols-3 gap-3 mb-3">
-                          <div>
-                            <label className="text-[11px] text-slate-500 mb-1 block">Commission Rate (%)</label>
-                            <input type="number" min="0" max="30" step="0.5" className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none" value={commission} onChange={e => setCommission(e.target.value)} />
-                          </div>
-                          <div>
-                            <label className="text-[11px] text-slate-500 mb-1 block">Admin Notes</label>
-                            <input className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none" value={adminNotes} onChange={e => setAdminNotes(e.target.value)} placeholder="Optional" />
-                          </div>
-                          <div>
-                            <label className="text-[11px] text-slate-500 mb-1 block">Rejection Reason (if rejecting)</label>
-                            <input className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none" value={rejectReason} onChange={e => setRejectReason(e.target.value)} placeholder="Required for rejection" />
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleApprovalAction("approve", l.listing_reference)}
-                            disabled={acting === l.listing_reference}
-                            className="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-40 transition-colors"
-                          >
-                            Approve & Set {commission}% Commission
-                          </button>
-                          <button
-                            onClick={() => handleApprovalAction("reject", l.listing_reference)}
-                            disabled={acting === l.listing_reference || !rejectReason}
-                            className="rounded-lg bg-red-700 hover:bg-red-600 px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-40 transition-colors"
-                          >
-                            Reject
-                          </button>
-                          <button
-                            onClick={() => { setApproveRef(null); setAdminNotes(""); setRejectReason(""); }}
-                            className="text-xs text-slate-500 hover:text-slate-300 px-2 py-1.5"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
+        {/* RFQs tab */}
+        {tab === "rfqs" && (
+          <div className="overflow-x-auto rounded-xl border border-slate-800">
+            {loading ? (
+              <div className="py-16 text-center text-sm text-slate-500">Loading…</div>
+            ) : rfqs.length === 0 ? (
+              <div className="py-16 text-center text-sm text-slate-500">No RFQs yet</div>
+            ) : (
+              <table className="w-full text-sm text-slate-300">
+                <thead className="border-b border-slate-800 text-left text-xs text-slate-500">
+                  <tr>
+                    <th className="px-4 py-3 font-medium">Reference</th>
+                    <th className="px-4 py-3 font-medium">Customer</th>
+                    <th className="px-4 py-3 font-medium">Service</th>
+                    <th className="px-4 py-3 font-medium">Route</th>
+                    <th className="px-4 py-3 font-medium">Status</th>
+                    <th className="px-4 py-3 font-medium">Created</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {rfqs.map(r => (
+                    <tr key={r.id} className="hover:bg-slate-800/30 transition-colors">
+                      <td className="px-4 py-3 font-mono text-xs text-slate-400">{r.rfq_reference}</td>
+                      <td className="px-4 py-3 text-xs">{r.customer_company?.name ?? "—"}</td>
+                      <td className="px-4 py-3 text-xs">{r.service_category}</td>
+                      <td className="px-4 py-3 text-xs text-slate-400">{r.origin_country ?? "—"} → {r.destination_country ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${rfqStatusColor(r.rfq_status)}`}>{r.rfq_status}</span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-slate-500">{r.created_at?.slice(0,10)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         )}
 
-        {/* ── Requests tab ── */}
-        {!loading && tab === "requests" && (
-          <div>
-            {requests.length === 0 ? (
-              <div className="py-16 text-center text-sm text-slate-500">No service requests yet.</div>
-            ) : (
-              <div className="space-y-3">
-                {requests.map(req => (
-                  <div key={req.id} className="rounded-xl border border-slate-800 bg-slate-900/40 px-6 py-5">
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="font-mono text-xs text-slate-500">{req.request_reference}</span>
-                          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${requestStatusColor(req.request_status)}`}>{req.request_status}</span>
-                        </div>
-                        <p className="text-sm text-slate-200">{(req.listing as { title?: string } | null)?.title ?? "—"}</p>
-                        <p className="text-xs text-slate-400 mt-0.5">{req.message ?? "No message"}</p>
-                        {req.admin_notes && <p className="text-xs text-slate-500 mt-1 italic">Note: {req.admin_notes}</p>}
-                      </div>
-                      <div className="text-right shrink-0">
-                        {req.agreed_price && <p className="text-sm font-bold">{formatPrice(req.agreed_price, req.agreed_currency)}</p>}
-                        {req.platform_commission && <p className="text-xs text-emerald-400">Commission: {formatPrice(req.platform_commission, req.agreed_currency)}</p>}
-                        <p className="text-xs text-slate-600 mt-1">{new Date(req.created_at).toLocaleDateString()}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+        {/* Reject modal */}
+        {rejectRef && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+            <div className="w-full max-w-sm rounded-2xl border border-slate-700 bg-slate-900 p-6">
+              <h3 className="text-base font-semibold text-slate-100 mb-3">Reject Listing</h3>
+              <p className="text-xs text-slate-500 mb-3">Reference: <span className="font-mono text-slate-300">{rejectRef}</span></p>
+              <label className="text-xs font-medium text-slate-300">Rejection Reason <span className="text-red-400">*</span></label>
+              <textarea className="w-full mt-1 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 resize-none focus:border-blue-500 focus:outline-none"
+                rows={3} value={rejectNote} onChange={e => setRejectNote(e.target.value)} placeholder="Explain the rejection reason to the provider" />
+              <div className="mt-4 flex gap-2 justify-end">
+                <button onClick={() => { setRejectRef(null); setRejectNote(""); }}
+                  className="rounded-lg border border-slate-600 px-4 py-2 text-xs text-slate-400 hover:bg-slate-800 transition-colors">Cancel</button>
+                <button onClick={() => rejectNote && doAction(rejectRef, "reject", rejectNote)} disabled={!rejectNote || !!acting}
+                  className="rounded-lg bg-red-600 hover:bg-red-500 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40 transition-colors">
+                  {acting ? "Rejecting…" : "Reject Listing"}
+                </button>
               </div>
-            )}
+            </div>
           </div>
         )}
       </main>

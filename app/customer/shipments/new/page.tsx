@@ -146,6 +146,7 @@ export default function NewShipmentPage() {
     { key: "Deposit + Balance",    desc: "40% deposit at booking · 60% balance when cargo is ready for delivery.", badge: "Recommended" },
     { key: "Milestone Payment",    desc: "Payments triggered at each leg milestone — booking, departure, arrival." },
     { key: "Financed Gap",         desc: "Nexum bridges your funding gap. Subject to credit review.", badge: "Finance" },
+    { key: "Vendor Credit Term",   desc: "You already have supplier credit. Nexum records, monitors, and helps build your verified payment history.", badge: "Credit" },
     { key: "Manual",               desc: "Custom payment arrangement — coordinate directly with Nexum." },
   ];
 
@@ -345,16 +346,22 @@ export default function NewShipmentPage() {
             <div className="space-y-2">
               {PAY_MODELS.map(opt => (
                 <button key={opt.key} type="button" onClick={() => setPaymentModel(opt.key)}
-                  className={`w-full text-left rounded-xl border p-4 transition-all ${paymentModel === opt.key ? "border-blue-500/60 bg-blue-500/10" : "border-slate-700 bg-slate-800/40 hover:border-slate-600"}`}>
+                  className={`w-full text-left rounded-xl border p-4 transition-all ${paymentModel === opt.key
+                    ? opt.key === "Vendor Credit Term" ? "border-purple-500/60 bg-purple-500/10" : "border-blue-500/60 bg-blue-500/10"
+                    : "border-slate-700 bg-slate-800/40 hover:border-slate-600"}`}>
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-2">
                       <div className={`h-3.5 w-3.5 rounded-full border-2 flex items-center justify-center shrink-0 ${paymentModel === opt.key ? "border-blue-400" : "border-slate-600"}`}>
                         {paymentModel === opt.key && <div className="h-1.5 w-1.5 rounded-full bg-blue-400" />}
                       </div>
-                      <span className={`text-sm font-medium ${paymentModel === opt.key ? "text-blue-300" : "text-slate-200"}`}>{opt.key}</span>
+                      <span className={`text-sm font-medium ${paymentModel === opt.key ? (opt.key === "Vendor Credit Term" ? "text-purple-300" : "text-blue-300") : "text-slate-200"}`}>{opt.key}</span>
                     </div>
                     {opt.badge && (
-                      <span className={`text-[10px] rounded-full px-2 py-0.5 border ${opt.badge === "Recommended" ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30" : "bg-purple-500/20 text-purple-300 border-purple-500/30"}`}>
+                      <span className={`text-[10px] rounded-full px-2 py-0.5 border ${
+                        opt.badge === "Recommended" ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30" :
+                        opt.badge === "Credit"      ? "bg-purple-500/20 text-purple-300 border-purple-500/30" :
+                        "bg-blue-500/20 text-blue-300 border-blue-500/30"
+                      }`}>
                         {opt.badge}
                       </span>
                     )}
@@ -363,9 +370,26 @@ export default function NewShipmentPage() {
                 </button>
               ))}
             </div>
-            <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3">
-              <p className="text-xs text-amber-300">Payment coordination only. Nexum does not hold funds as escrow. Payment allocation means Nexum records which provider should receive which amount — actual fund transfers follow your verified payment receipt.</p>
-            </div>
+
+            {/* Vendor Credit Term — conditional info panel */}
+            {paymentModel === "Vendor Credit Term" ? (
+              <div className="rounded-xl border border-purple-500/20 bg-purple-500/5 px-4 py-4 space-y-1.5">
+                <p className="text-xs font-semibold text-purple-300">Vendor Credit Term Recorded</p>
+                <p className="text-xs text-slate-400">
+                  Nexum will not collect or hold any payment. Payment is due directly to your supplier under your existing credit arrangement.
+                </p>
+                <ul className="text-xs text-slate-500 space-y-1 ml-3 list-disc">
+                  <li>After creating this bundle, go to <span className="text-purple-400">Vendor Credit</span> to record supplier invoice details</li>
+                  <li>Nexum sends reminders 7 days, 3 days, and on the due date</li>
+                  <li>Upload payment proof after you pay your supplier</li>
+                  <li>Each on-time payment builds your verified trade history</li>
+                </ul>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3">
+                <p className="text-xs text-amber-300">Payment coordination only. Nexum does not hold funds as escrow. Payment allocation means Nexum records which provider should receive which amount — actual fund transfers follow your verified payment receipt.</p>
+              </div>
+            )}
           </>)}
 
           {/* ── Step 3: Review ── */}

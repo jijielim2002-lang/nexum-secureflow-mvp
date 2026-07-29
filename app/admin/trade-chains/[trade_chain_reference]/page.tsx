@@ -128,6 +128,24 @@ export default function AdminTradeChainDetailPage({ params }: { params: Promise<
   const [riskSev,      setRiskSev]      = useState("Medium");
   const [riskDesc,     setRiskDesc]     = useState("");
 
+  // Add Node modal
+  const [showAddNode,    setShowAddNode]    = useState(false);
+  const [nodeRole,       setNodeRole]       = useState("Importer");
+  const [nodeCompany,    setNodeCompany]    = useState("");
+  const [nodeCountry,    setNodeCountry]    = useState("");
+  const [nodeVisibility, setNodeVisibility] = useState("Full");
+  const [nodeSeq,        setNodeSeq]        = useState("");
+
+  // Add Link modal
+  const [showAddLink,  setShowAddLink]  = useState(false);
+  const [linkFrom,     setLinkFrom]     = useState("");
+  const [linkTo,       setLinkTo]       = useState("");
+  const [linkType,     setLinkType]     = useState("Purchase Order");
+  const [linkAmount,   setLinkAmount]   = useState("");
+  const [linkCurrency, setLinkCurrency] = useState("USD");
+  const [linkTerms,    setLinkTerms]    = useState("");
+  const [linkDueDate,  setLinkDueDate]  = useState("");
+
   const load = useCallback(async () => {
     setLoading(true); setErr("");
     const tok = await getToken();
@@ -187,6 +205,40 @@ export default function AdminTradeChainDetailPage({ params }: { params: Promise<
       method:"PATCH", headers:{"Content-Type":"application/json", Authorization:`Bearer ${await getToken()}`},
       body: JSON.stringify({ flag_id: id }),
     });
+    await load(); setActing("");
+  }
+
+  async function addNode() {
+    setActing("addNode");
+    await fetch(`/api/trade-chains/${trade_chain_reference}/nodes`, {
+      method:"POST", headers:{"Content-Type":"application/json", Authorization:`Bearer ${await getToken()}`},
+      body: JSON.stringify({
+        node_role: nodeRole,
+        company_name: nodeCompany || undefined,
+        country: nodeCountry || undefined,
+        visibility_level: nodeVisibility,
+        node_sequence: nodeSeq ? Number(nodeSeq) : undefined,
+      }),
+    });
+    setShowAddNode(false); setNodeCompany(""); setNodeCountry(""); setNodeSeq("");
+    await load(); setActing("");
+  }
+
+  async function addLink() {
+    setActing("addLink");
+    await fetch(`/api/trade-chains/${trade_chain_reference}/links`, {
+      method:"POST", headers:{"Content-Type":"application/json", Authorization:`Bearer ${await getToken()}`},
+      body: JSON.stringify({
+        from_node_id: linkFrom,
+        to_node_id: linkTo,
+        link_type: linkType,
+        trade_amount: linkAmount ? Number(linkAmount) : 0,
+        currency: linkCurrency,
+        payment_terms: linkTerms || undefined,
+        expected_payment_date: linkDueDate || undefined,
+      }),
+    });
+    setShowAddLink(false); setLinkFrom(""); setLinkTo(""); setLinkAmount(""); setLinkTerms(""); setLinkDueDate("");
     await load(); setActing("");
   }
 
@@ -339,10 +391,10 @@ export default function AdminTradeChainDetailPage({ params }: { params: Promise<
               <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-xs text-slate-500 uppercase tracking-wider">Parties / Nodes ({nodes.length})</p>
-                  <Link href={`/admin/trade-chains/${trade_chain_reference}/add-node`}
+                  <button onClick={() => setShowAddNode(true)}
                     className="rounded-lg border border-slate-600 px-3 py-1 text-[11px] text-slate-300 hover:bg-slate-800 transition-colors">
                     + Add Party
-                  </Link>
+                  </button>
                 </div>
                 {nodes.length === 0 ? (
                   <p className="text-xs text-slate-500 text-center py-4">No parties added yet.</p>
@@ -391,10 +443,10 @@ export default function AdminTradeChainDetailPage({ params }: { params: Promise<
             <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
               <div className="flex items-center justify-between mb-3">
                 <p className="text-xs text-slate-500 uppercase tracking-wider">Trade Links</p>
-                <Link href={`/admin/trade-chains/${trade_chain_reference}/add-link`}
+                <button onClick={() => setShowAddLink(true)}
                   className="rounded-lg border border-slate-600 px-3 py-1 text-[11px] text-slate-300 hover:bg-slate-800">
                   + Add Link
-                </Link>
+                </button>
               </div>
               {links.length === 0 ? (
                 <p className="text-xs text-slate-500 text-center py-6">No trade links yet.</p>
@@ -673,6 +725,124 @@ export default function AdminTradeChainDetailPage({ params }: { params: Promise<
                 <button onClick={() => void raiseFlag()} disabled={acting === "risk"}
                   className="rounded-lg bg-red-700 hover:bg-red-600 px-5 py-2 text-xs font-semibold text-white disabled:opacity-40">
                   {acting === "risk" ? "…" : "Raise Flag →"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Add Node Modal ── */}
+        {showAddNode && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+            <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6">
+              <h2 className="text-base font-semibold mb-4">Add Party / Node</h2>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block">Role</label>
+                  <select value={nodeRole} onChange={e => setNodeRole(e.target.value)}
+                    className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-xs text-slate-200 focus:outline-none">
+                    {["Factory","Supplier","Exporter","Freight Forwarder","Customs Broker","Transporter","Importer","Trader","Distributor","Wholesaler","Retailer","End Buyer","Finance Partner","Remittance Partner","Insurance Partner","Other"].map(r => <option key={r}>{r}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block">Company Name (optional)</label>
+                  <input value={nodeCompany} onChange={e => setNodeCompany(e.target.value)} placeholder="e.g. ABC Logistics Sdn Bhd"
+                    className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-xs text-slate-200 focus:outline-none" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">Country (optional)</label>
+                    <input value={nodeCountry} onChange={e => setNodeCountry(e.target.value)} placeholder="e.g. MY"
+                      className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-xs text-slate-200 focus:outline-none" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">Sequence (optional)</label>
+                    <input type="number" value={nodeSeq} onChange={e => setNodeSeq(e.target.value)} placeholder="e.g. 3"
+                      className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-xs text-slate-200 focus:outline-none" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block">Visibility</label>
+                  <select value={nodeVisibility} onChange={e => setNodeVisibility(e.target.value)}
+                    className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-xs text-slate-200 focus:outline-none">
+                    <option value="Full">Full — visible to all chain participants</option>
+                    <option value="Masked">Masked — role visible, company hidden</option>
+                    <option value="Hidden">Hidden — completely invisible to others</option>
+                  </select>
+                </div>
+              </div>
+              <div className="mt-4 flex gap-2 justify-end">
+                <button onClick={() => setShowAddNode(false)} className="rounded-lg border border-slate-600 px-4 py-2 text-xs text-slate-400 hover:bg-slate-800">Cancel</button>
+                <button onClick={() => void addNode()} disabled={acting === "addNode"}
+                  className="rounded-lg bg-blue-700 hover:bg-blue-600 px-5 py-2 text-xs font-semibold text-white disabled:opacity-40">
+                  {acting === "addNode" ? "Adding…" : "Add Party →"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Add Link Modal ── */}
+        {showAddLink && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+            <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6">
+              <h2 className="text-base font-semibold mb-4">Add Trade Link</h2>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block">From Node</label>
+                  <select value={linkFrom} onChange={e => setLinkFrom(e.target.value)}
+                    className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-xs text-slate-200 focus:outline-none">
+                    <option value="">— Select —</option>
+                    {sortedNodes.map(n => <option key={n.id} value={n.id}>{n.node_role}{n.company_name ? ` · ${n.company_name}` : ""}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block">To Node</label>
+                  <select value={linkTo} onChange={e => setLinkTo(e.target.value)}
+                    className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-xs text-slate-200 focus:outline-none">
+                    <option value="">— Select —</option>
+                    {sortedNodes.map(n => <option key={n.id} value={n.id}>{n.node_role}{n.company_name ? ` · ${n.company_name}` : ""}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block">Link Type</label>
+                  <select value={linkType} onChange={e => setLinkType(e.target.value)}
+                    className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-xs text-slate-200 focus:outline-none">
+                    {["Purchase Order","Commercial Invoice","Proforma Invoice","Letter of Credit","Open Account","Consignment","Advance Payment","Documentary Collection","Inter-company Transfer"].map(t => <option key={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">Trade Amount</label>
+                    <input type="number" value={linkAmount} onChange={e => setLinkAmount(e.target.value)} placeholder="0.00"
+                      className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-xs text-slate-200 focus:outline-none" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">Currency</label>
+                    <select value={linkCurrency} onChange={e => setLinkCurrency(e.target.value)}
+                      className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-xs text-slate-200 focus:outline-none">
+                      {["USD","EUR","MYR","CNY","SGD","GBP"].map(c => <option key={c}>{c}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">Payment Terms (optional)</label>
+                    <input value={linkTerms} onChange={e => setLinkTerms(e.target.value)} placeholder="e.g. Net 30"
+                      className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-xs text-slate-200 focus:outline-none" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">Due Date (optional)</label>
+                    <input type="date" value={linkDueDate} onChange={e => setLinkDueDate(e.target.value)}
+                      className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-xs text-slate-200 focus:outline-none" />
+                  </div>
+                </div>
+              </div>
+              <div className="mt-4 flex gap-2 justify-end">
+                <button onClick={() => setShowAddLink(false)} className="rounded-lg border border-slate-600 px-4 py-2 text-xs text-slate-400 hover:bg-slate-800">Cancel</button>
+                <button onClick={() => void addLink()} disabled={acting === "addLink" || !linkFrom || !linkTo}
+                  className="rounded-lg bg-blue-700 hover:bg-blue-600 px-5 py-2 text-xs font-semibold text-white disabled:opacity-40">
+                  {acting === "addLink" ? "Adding…" : "Add Link →"}
                 </button>
               </div>
             </div>

@@ -33,6 +33,15 @@ interface FormData {
   release_condition:        string;
   remittance_required:      boolean;
   remittance_partner:       string;
+  // Payee bank details
+  bank_name:                string;
+  bank_country:             string;
+  swift_bic:                string;
+  account_number:           string;
+  account_holder:           string;
+  bank_address:             string;
+  bank_charges:             string;
+  fx_rate_note:             string;
 }
 
 const INIT: FormData = {
@@ -45,6 +54,9 @@ const INIT: FormData = {
   origin_country: "", destination_country: "",
   shipment_mode: "", expected_ship_date: "", expected_arrival_date: "",
   release_condition: "", remittance_required: false, remittance_partner: "",
+  bank_name: "", bank_country: "", swift_bic: "",
+  account_number: "", account_holder: "", bank_address: "",
+  bank_charges: "SHA", fx_rate_note: "",
 };
 
 const STEPS = ["Request Type","Trade Details","Documents","Release Condition","Remittance","Compliance","Review & Submit"];
@@ -148,6 +160,18 @@ export default function ProviderNewTradeFlowPage() {
         release_condition: form.release_condition || null,
         remittance_required: form.remittance_required,
         remittance_partner: form.remittance_partner || null,
+        payee_bank_details: (form.account_holder || form.bank_name || form.swift_bic) ? {
+          account_holder: form.account_holder || null,
+          bank_name:      form.bank_name      || null,
+          bank_country:   form.bank_country   || null,
+          swift_bic:      form.swift_bic      || null,
+          account_number_masked: form.account_number
+            ? ("****" + form.account_number.slice(-4))
+            : null,
+          bank_address:   form.bank_address   || null,
+          bank_charges:   form.bank_charges   || "SHA",
+          fx_rate_note:   form.fx_rate_note   || null,
+        } : null,
       }),
     });
     const json = await res.json() as { ok?: boolean; tradeflow_reference?: string; error?: string };
@@ -276,6 +300,48 @@ export default function ProviderNewTradeFlowPage() {
                 <Field label="Expected Arrival Date">
                   <input type="date" className={inputCls} value={form.expected_arrival_date} onChange={e => set("expected_arrival_date", e.target.value)} />
                 </Field>
+              </div>
+
+              {/* Bank details section */}
+              <div className="mt-6 pt-5 border-t border-slate-700/60">
+                <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-4">Payee Bank Details</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label="Account Holder Name">
+                    <input className={inputCls} value={form.account_holder} onChange={e => set("account_holder", e.target.value)} placeholder="Legal name on bank account" />
+                  </Field>
+                  <Field label="Bank Name">
+                    <input className={inputCls} value={form.bank_name} onChange={e => set("bank_name", e.target.value)} placeholder="e.g. HSBC, DBS, Bank of China" />
+                  </Field>
+                  <Field label="SWIFT / BIC Code">
+                    <input className={inputCls} value={form.swift_bic} onChange={e => set("swift_bic", e.target.value.toUpperCase())} placeholder="e.g. HSBCGB2L" maxLength={11} />
+                  </Field>
+                  <Field label="Account Number / IBAN">
+                    <input className={inputCls} value={form.account_number} onChange={e => set("account_number", e.target.value)} placeholder="Full account number (stored securely)" />
+                  </Field>
+                  <Field label="Bank Country">
+                    <input className={inputCls} value={form.bank_country} onChange={e => set("bank_country", e.target.value)} placeholder="e.g. United Kingdom, Singapore" />
+                  </Field>
+                  <Field label="Bank Charges">
+                    <select className={selectCls} value={form.bank_charges} onChange={e => set("bank_charges", e.target.value)}>
+                      <option value="SHA">SHA — Shared (sender + receiver each pay own bank)</option>
+                      <option value="OUR">OUR — Sender pays all charges</option>
+                      <option value="BEN">BEN — Receiver pays all charges</option>
+                    </select>
+                  </Field>
+                  <div className="col-span-2">
+                    <Field label="Bank Address">
+                      <input className={inputCls} value={form.bank_address} onChange={e => set("bank_address", e.target.value)} placeholder="Street, city, country" />
+                    </Field>
+                  </div>
+                  <div className="col-span-2">
+                    <Field label="Currency / FX Rate Note">
+                      <input className={inputCls} value={form.fx_rate_note} onChange={e => set("fx_rate_note", e.target.value)} placeholder="e.g. Payment in USD. Approx 1 USD = 4.45 MYR at time of request." />
+                    </Field>
+                  </div>
+                </div>
+                <p className="mt-3 text-xs text-slate-500 bg-slate-800/40 rounded-lg px-3 py-2">
+                  Account number is stored securely and only visible to authorised Nexum admins. Account number displayed to customer will be masked.
+                </p>
               </div>
             </div>
           )}

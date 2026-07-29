@@ -37,6 +37,7 @@ const OPERATIONS = [
   { label: "Command Center",    href: "/admin/command-center" },
   { label: "DB Health",         href: "/admin/db-health" },
   { label: "TradeFlow",         href: "/admin/tradeflow" },
+  { label: "Marketplace",       href: "/admin/marketplace" },
 ];
 
 const SETTINGS = [
@@ -106,7 +107,8 @@ export function AdminNav({ currentPage }: AdminNavProps) {
           <Link href="/admin/jobs"       className={cls("jobs")}>Jobs</Link>
           <Link href="/admin/companies"  className={cls("companies")}>Companies</Link>
           <Link href="/admin/users"      className={cls("users")}>Users</Link>
-          <Link href="/admin/tradeflow"  className={cls("tradeflow") + " text-blue-400 hover:text-blue-300"}>TradeFlow</Link>
+          <Link href="/admin/tradeflow"    className={cls("tradeflow") + " text-blue-400 hover:text-blue-300"}>TradeFlow</Link>
+          <Link href="/admin/marketplace" className={cls("marketplace") + " text-emerald-400 hover:text-emerald-300"}>Marketplace</Link>
 
           <DropdownMenu label="Payments"   isOpen={open === "payments"}   onToggle={() => toggle("payments")}   items={PAYMENTS}   onClose={() => setOpen(null)} />
           <DropdownMenu label="Reports"    isOpen={open === "reports"}    onToggle={() => toggle("reports")}    items={REPORTS}    onClose={() => setOpen(null)} />

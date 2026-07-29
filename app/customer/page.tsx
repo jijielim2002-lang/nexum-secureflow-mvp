@@ -102,7 +102,8 @@ export default function CustomerDashboard() {
             <Link href="/customer/inquiries" className="hover:text-slate-100 transition-colors">Inquiries</Link>
             <Link href="/customer/quotations" className="hover:text-slate-100 transition-colors">Quotations</Link>
             <Link href="/customer/jobs" className="hover:text-slate-100 transition-colors">My Jobs</Link>
-            <Link href="/customer/tradeflow" className="hover:text-slate-100 transition-colors font-medium text-blue-400">TradeFlow</Link>
+            <Link href="/customer/tradeflow"    className="hover:text-slate-100 transition-colors font-medium text-blue-400">TradeFlow</Link>
+            <Link href="/customer/marketplace" className="hover:text-slate-100 transition-colors font-medium text-emerald-400">Marketplace</Link>
             <Link href="/customer/notifications" className="hover:text-slate-100 transition-colors">Notifications</Link>
             <NotificationBell />
             <LogoutButton />

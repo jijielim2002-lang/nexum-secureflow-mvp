@@ -365,6 +365,9 @@ export default function AdminDashboard() {
                   <Link href="/admin/vendor-credit" className="text-xs bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 text-purple-300 px-3 py-2 rounded-lg transition">
                     💳 Vendor Credit
                   </Link>
+                  <Link href="/admin/tradecycle" className="text-xs bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/20 text-cyan-300 px-3 py-2 rounded-lg transition">
+                    🔄 TradeCycle
+                  </Link>
                 </>
               )}
               {/* Finance Reviewer */}

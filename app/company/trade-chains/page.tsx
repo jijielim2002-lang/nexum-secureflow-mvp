@@ -64,6 +64,7 @@ export default function CompanyTradeChainsPage() {
           <nav className="flex items-center gap-4 text-xs text-slate-400">
             <span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1 text-blue-400 font-medium">Company</span>
             <Link href="/customer" className="hover:text-slate-100">Dashboard</Link>
+            <Link href="/company/intelligence" className="hover:text-violet-300 text-violet-400">Intelligence</Link>
             <NotificationBell /><LogoutButton />
           </nav>
         </div>

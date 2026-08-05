@@ -36,7 +36,7 @@ interface ParcelDetail {
 }
 
 const STATUS_STEPS = [
-  "Created","Label Generated","Received at Origin Warehouse",
+  "Booking Created","Payment Verified","Label Generated","Received at Origin Warehouse",
   "Loaded to Driver","In Transit","Arrived at Destination Warehouse",
   "Ready for Collection","Completed"
 ];
@@ -88,7 +88,7 @@ export default function ParcelTracking({ params }: { params: Promise<{ tracking_
   );
 
   const currentStep = STATUS_STEPS.indexOf(parcel.parcel_status);
-  const canCancel = ["Created","Label Generated"].includes(parcel.parcel_status);
+  const canCancel = ["Booking Created","Payment Verified","Label Generated"].includes(parcel.parcel_status);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">

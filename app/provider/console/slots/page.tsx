@@ -48,7 +48,7 @@ export default function ProviderSlots() {
     setLoading(true);
     const token = await getToken();
     const h = { Authorization: `Bearer ${token}` };
-    const qs = new URLSearchParams({ status: "Released" });
+    const qs = new URLSearchParams({ status: "Open" });
     if (routeId !== "all") qs.set("route_id", routeId);
     if (date) qs.set("date", date);
     const [openRes, myRes] = await Promise.all([

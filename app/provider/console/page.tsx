@@ -63,7 +63,7 @@ export default function ProviderConsole() {
     const h = { Authorization: `Bearer ${token}` };
     const [myRes, openRes, rRes, wRes] = await Promise.all([
       fetch("/api/console/slots", { headers: h }),
-      fetch("/api/console/slots?status=Released", { headers: h }),
+      fetch("/api/console/slots?status=Open", { headers: h }),
       fetch("/api/console/ratings", { headers: h }),
       fetch("/api/console/wallets?wallet_type=Supplier", { headers: h }),
     ]);
@@ -182,7 +182,7 @@ export default function ProviderConsole() {
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-10 text-center">
                   <p className="text-2xl mb-2">⏳</p>
                   <p className="text-slate-300 font-medium">No slots released yet</p>
-                  <p className="text-slate-500 text-sm mt-1">Slots are released once RM500 in parcel revenue is collected. Check back shortly.</p>
+                  <p className="text-slate-500 text-sm mt-1">No open slots available right now. Slots are generated Mon–Fri for 12:00 departures.</p>
                 </div>
               )}
               {openSlots.map(s => <OpenSlotCard key={s.id} slot={s} onBooked={load} />)}
@@ -284,7 +284,7 @@ function OpenSlotCard({ slot, onBooked }: { slot: Slot; onBooked: () => void }) 
               {route?.route_code ?? "—"}
             </span>
             <span className="text-[10px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded font-semibold">
-              RELEASED
+              OPEN
             </span>
           </div>
 
@@ -353,7 +353,9 @@ function OpenSlotCard({ slot, onBooked }: { slot: Slot; onBooked: () => void }) 
       {/* Booking form */}
       {expanded && (
         <div className="mt-4 pt-4 border-t border-slate-700 space-y-3">
-          <p className="text-xs text-slate-400">Enter your vehicle details to confirm this booking. You commit to picking up all parcels at the origin warehouse by <strong className="text-white">11:50</strong> and delivering to destination warehouse.</p>
+          <p className="text-xs text-slate-400">
+            Book now to secure your slot. If total parcel revenue is below <strong className="text-amber-300">RM{threshold.toFixed(0)}</strong> at <strong className="text-white">11:00</strong> (1hr before departure), the slot will be rescheduled to the next business day and you will be notified.
+          </p>
           {err && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{err}</p>}
           <input
             value={vehicle} onChange={e => setVehicle(e.target.value)}

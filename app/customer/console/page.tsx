@@ -30,7 +30,9 @@ interface Wallet {
 }
 
 const STATUS_COLOR: Record<string, string> = {
+  "Booking Created":                 "bg-slate-700/50 text-slate-300 border-slate-600",
   "Created":                         "bg-slate-700/50 text-slate-300 border-slate-600",
+  "Payment Verified":                "bg-teal-500/15 text-teal-300 border-teal-500/30",
   "Label Generated":                 "bg-indigo-500/15 text-indigo-300 border-indigo-500/30",
   "Received at Origin Warehouse":    "bg-blue-500/15 text-blue-300 border-blue-500/30",
   "Loaded to Driver":                "bg-violet-500/15 text-violet-300 border-violet-500/30",

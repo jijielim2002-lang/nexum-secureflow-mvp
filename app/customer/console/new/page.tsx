@@ -112,9 +112,10 @@ export default function NewParcel() {
     if (!routeId || !date) return;
     setLoadingSlots(true);
     const token = await getToken();
-    const qs = new URLSearchParams({ route_id: routeId, date, status: "Open", service_type: "Same-Day Express" });
+    const qs = new URLSearchParams({ route_id: routeId, date, service_type: "Same-Day Express" });
     const d = await fetch(`/api/console/slots?${qs}`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json());
-    setSlots(Array.isArray(d) ? d : []);
+    // Show Open and Released slots only (not Rescheduled/Cancelled/Completed)
+    setSlots(Array.isArray(d) ? d.filter((s: Slot) => ["Open","Released","Booked"].includes(s.slot_status)) : []);
     setLoadingSlots(false);
   }, [routeId, date]);
 
@@ -215,7 +216,7 @@ export default function NewParcel() {
                 className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500" />
               <p className="text-xs text-slate-500 mt-1">
                 {serviceType === "Same-Day Express"
-                  ? "Mon–Sat only. PG↔KL slots: 10:00, 11:00, 12:00 · KL↔JB slots: 10:00, 11:00, 12:00, 13:00"
+                  ? "Mon–Fri only. All routes depart at 12:00. Cutoff 11:30 — slot released to driver once RM500 revenue is reached."
                   : "Mon–Sat only. Your cargo will be consolidated and move on the next business day."}
               </p>
             </div>
@@ -254,7 +255,11 @@ export default function NewParcel() {
                           )}
                           <p className="text-xs text-slate-600 font-mono mt-0.5">{s.slot_reference}</p>
                         </div>
-                        <span className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-full">Open</span>
+                        <span className={`text-xs px-2 py-1 rounded-full border ${
+                          s.slot_status === "Released" ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" :
+                          s.slot_status === "Booked"   ? "text-violet-400 bg-violet-500/10 border-violet-500/20" :
+                                                         "text-slate-400 bg-slate-700/50 border-slate-600"
+                        }`}>{s.slot_status}</span>
                       </div>
                     </button>
                   ))}

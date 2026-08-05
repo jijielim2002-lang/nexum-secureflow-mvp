@@ -258,7 +258,7 @@ export async function createConsoleParcel(
   if (isSDE) {
     slotId = input.slot_id!;
     const { data: slot } = await db.from('console_route_slots').select('slot_status').eq('id', slotId).single();
-    if (!slot || !['Open','Booked'].includes(slot.slot_status)) return { ok: false, error: 'Selected slot is no longer available.' };
+    if (!slot || !['Open','Released','Booked'].includes(slot.slot_status)) return { ok: false, error: 'Selected slot is no longer available.' };
   } else {
     // Get/create NDE slot via DB function
     const { data: ndeSlotId, error: ndeErr } = await db.rpc('console_get_or_create_nde_slot', {
@@ -386,6 +386,11 @@ export async function createConsoleParcel(
   // Schedule WhatsApp notification
   await createWhatsAppEvent(trackingNumber, 'Booking Created', input.whatsapp_number ?? '');
 
+  // Update slot revenue + auto-release if threshold met (SDE only)
+  if (isSDE && slotId) {
+    await db.rpc('console_recalculate_slot_revenue', { p_slot_id: slotId });
+  }
+
   return { ok: true, tracking_number: trackingNumber, parcel: parcel as ConsoleParcel };
 }
 
@@ -488,7 +493,7 @@ export async function bookConsoleSlot(
   const { data: slot } = await db.from('console_route_slots')
     .select('*').eq('id', slotId).single();
   if (!slot) return { ok: false, error: 'Slot not found.' };
-  if (slot.slot_status !== 'Open') return { ok: false, error: 'Slot is no longer open.' };
+  if (slot.slot_status !== 'Released') return { ok: false, error: 'Slot is not yet released. It must reach RM500 revenue before suppliers can book.' };
 
   await db.from('console_route_slots').update({
     supplier_company_id: supplierCompanyId,

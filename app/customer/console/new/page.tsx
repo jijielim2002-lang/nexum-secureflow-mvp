@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
@@ -16,45 +16,84 @@ async function getToken(): Promise<string> {
   return "";
 }
 
-interface Route { id: string; route_code: string; origin_city: string; destination_city: string; max_transit_hours: number }
-interface Slot { id: string; slot_reference: string; slot_date: string; departure_time: string; expected_arrival_time?: string; same_day_arrival: boolean; slot_status: string }
+interface Route {
+  id: string; route_code: string; origin_city: string; destination_city: string;
+  max_transit_hours: number; same_day_enabled: boolean; next_day_enabled: boolean;
+  same_day_price_per_carton: number; next_day_price_per_kg: number;
+  next_day_minimum_charge: number; max_pallet_weight_kg: number;
+  origin_warehouse?: { warehouse_name: string; full_address: string };
+  destination_warehouse?: { warehouse_name: string; full_address: string };
+}
+interface Slot {
+  id: string; slot_reference: string; slot_date: string;
+  departure_time: string; expected_arrival_time?: string;
+  same_day_arrival: boolean; slot_status: string;
+}
 
-const STEPS = ["Route & Slot", "Sender & Receiver", "Parcel Details", "Review & Pay"];
+const EXCLUDED = ["drug","weapon","explosive","flammable","perishable","cash","jewellery","animal","medicine","tobacco","alcohol","radioactive","hazardous","firearm"];
+const isExcluded = (text: string) => { const t = text.toLowerCase(); return EXCLUDED.some(k => t.includes(k)); };
+
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const maxDateStr = () => new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+function calcPrice(type: string, route: Route, parcelCount: number, weightKg: number) {
+  if (type === "Same-Day Express") return route.same_day_price_per_carton * parcelCount;
+  return Math.max(weightKg * route.next_day_price_per_kg, route.next_day_minimum_charge);
+}
 
 export default function NewParcel() {
   const router = useRouter();
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(1); // 1–5
 
-  // Step 1
-  const [routes, setRoutes] = useState<Route[]>([]);
-  const [selectedRoute, setSelectedRoute] = useState<Route | null>(null);
-  const [slots, setSlots]   = useState<Slot[]>([]);
-  const [selectedSlot, setSelectedSlot]   = useState<Slot | null>(null);
-  const [slotDate, setSlotDate] = useState("");
+  // Step 1: Service + Route + Date
+  const [serviceType, setServiceType] = useState<"Same-Day Express" | "Next-Day Economy">("Same-Day Express");
+  const [routes, setRoutes]           = useState<Route[]>([]);
+  const [routeId, setRouteId]         = useState("");
+  const [date, setDate]               = useState(todayStr());
 
-  // Step 2
-  const [senderName, setSenderName]     = useState("");
-  const [senderContact, setSenderContact] = useState("");
-  const [senderIC, setSenderIC]         = useState("");
-  const [receiverName, setReceiverName] = useState("");
+  // Step 2: Slot (SDE) or ETA (NDE)
+  const [slots, setSlots]           = useState<Slot[]>([]);
+  const [slotId, setSlotId]         = useState("");
+  const [loadingSlots, setLoadingSlots] = useState(false);
+
+  // Step 3: Sender / Receiver
+  const [senderName,      setSenderName]      = useState("");
+  const [senderContact,   setSenderContact]   = useState("");
+  const [senderIC,        setSenderIC]        = useState("");
+  const [receiverName,    setReceiverName]    = useState("");
   const [receiverContact, setReceiverContact] = useState("");
-  const [receiverIC, setReceiverIC]     = useState("");
-  const [waPhone, setWaPhone]           = useState("");
+  const [receiverIC,      setReceiverIC]      = useState("");
+  const [whatsapp,        setWhatsapp]        = useState("");
 
-  // Step 3
-  const [content, setContent]   = useState("");
-  const [liquid, setLiquid]     = useState(false);
-  const [fragile, setFragile]   = useState(false);
-  const [length, setLength]     = useState("");
-  const [width, setWidth]       = useState("");
-  const [height, setHeight]     = useState("");
-  const [weight, setWeight]     = useState("");
+  // Step 4: Cargo
+  const [content,      setContent]      = useState("");
+  const [fragile,      setFragile]      = useState(false);
+  const [liquid,       setLiquid]       = useState(false);
+  // SDE
+  const [parcelCount,  setParcelCount]  = useState(1);
+  const [length,       setLength]       = useState("");
+  const [width,        setWidth]        = useState("");
+  const [height,       setHeight]       = useState("");
+  const [weight,       setWeight]       = useState("");
+  // NDE
+  const [palletCount,  setPalletCount]  = useState(0);
+  const [palletWeight, setPalletWeight] = useState("");
 
-  // Submission
+  // Step 5: Payment
+  const [paymentMode, setPaymentMode] = useState<"wallet" | "proof">("wallet");
+  const [proofUrl,    setProofUrl]    = useState("");
+
+  const [wallet,     setWallet]     = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError]           = useState("");
-  const [wallet, setWallet]         = useState<number>(0);
+  const [error,      setError]      = useState("");
 
+  const selectedRoute = routes.find(r => r.id === routeId);
+  const selectedSlot  = slots.find(s => s.id === slotId);
+  const totalWeightNum = parseFloat(palletWeight) || 0;
+  const price = selectedRoute ? calcPrice(serviceType, selectedRoute, parcelCount, totalWeightNum) : 0;
+  const filteredRoutes = routes.filter(r => serviceType === "Same-Day Express" ? r.same_day_enabled : r.next_day_enabled);
+
+  // Load routes + wallet
   useEffect(() => {
     (async () => {
       const token = await getToken();
@@ -68,66 +107,54 @@ export default function NewParcel() {
     })();
   }, []);
 
-  const loadSlots = async (routeId: string, date: string) => {
-    if (!date) return;
+  // Load slots
+  const loadSlots = useCallback(async () => {
+    if (!routeId || !date) return;
+    setLoadingSlots(true);
     const token = await getToken();
-    const res = await fetch(`/api/console/slots?route_id=${routeId}&date=${date}&status=Open`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    const data = await res.json();
-    setSlots(Array.isArray(data) ? data : []);
-  };
+    const qs = new URLSearchParams({ route_id: routeId, date, status: "Open", service_type: "Same-Day Express" });
+    const d = await fetch(`/api/console/slots?${qs}`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json());
+    setSlots(Array.isArray(d) ? d : []);
+    setLoadingSlots(false);
+  }, [routeId, date]);
 
-  const today = new Date().toISOString().split("T")[0];
-  const maxDate = new Date(Date.now() + 14*24*60*60*1000).toISOString().split("T")[0];
-
-  const validateStep = () => {
-    if (step === 0) {
-      if (!selectedRoute) return "Please select a route.";
-      if (!selectedSlot)  return "Please select a departure slot.";
-    }
-    if (step === 1) {
-      if (!senderName || !senderContact) return "Sender name and contact are required.";
-      if (!receiverName || !receiverContact) return "Receiver name and contact are required.";
-    }
-    if (step === 2) {
-      if (!content) return "Please declare the parcel content.";
-      const l = parseFloat(length), w = parseFloat(width), h = parseFloat(height), wt = parseFloat(weight);
-      if (l > 30 || w > 30 || h > 30) return "Maximum parcel size is 30×30×30 cm.";
-      if (wt > 15) return "Maximum parcel weight is 15 kg.";
-      if (!l || !w || !h || !wt) return "Please enter parcel dimensions and weight.";
-    }
-    return "";
-  };
-
-  const next = () => {
-    const err = validateStep();
-    if (err) { setError(err); return; }
-    setError(""); setStep(s => s + 1);
-  };
+  useEffect(() => {
+    if (step === 2 && serviceType === "Same-Day Express" && routeId && date) loadSlots();
+  }, [step, serviceType, routeId, date, loadSlots]);
 
   const submit = async () => {
-    if (wallet < 50) { setError("Insufficient wallet balance. Please top up your wallet first (min RM100)."); return; }
     setSubmitting(true); setError("");
+    if (isExcluded(content)) { setError("Declared goods are excluded from Console Transport."); setSubmitting(false); return; }
     const token = await getToken();
+    const body: Record<string, unknown> = {
+      service_type: serviceType,
+      route_id:     routeId,
+      slot_id:      serviceType === "Same-Day Express" ? slotId : undefined,
+      drop_off_date: serviceType === "Next-Day Economy" ? date : undefined,
+      sender_name: senderName, sender_contact: senderContact, sender_ic: senderIC || undefined,
+      receiver_name: receiverName, receiver_contact: receiverContact, receiver_ic: receiverIC || undefined,
+      whatsapp_number: whatsapp || undefined,
+      commodity_content: content, fragile, contains_liquid: liquid,
+      parcel_count:       serviceType === "Same-Day Express" ? parcelCount : undefined,
+      parcel_length_cm:   parseFloat(length)  || undefined,
+      parcel_width_cm:    parseFloat(width)   || undefined,
+      parcel_height_cm:   parseFloat(height)  || undefined,
+      parcel_weight_kg:   parseFloat(weight)  || undefined,
+      pallet_count:       serviceType === "Next-Day Economy" ? palletCount  : undefined,
+      pallet_weight_kg:   serviceType === "Next-Day Economy" ? totalWeightNum : undefined,
+      payment_mode:    paymentMode,
+      payment_proof_url: paymentMode === "proof" ? proofUrl : undefined,
+    };
     const res = await fetch("/api/console/parcels", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        route_id: selectedRoute!.id, slot_id: selectedSlot!.id,
-        sender_name: senderName, sender_contact: senderContact, sender_ic: senderIC,
-        receiver_name: receiverName, receiver_contact: receiverContact, receiver_ic: receiverIC,
-        commodity_content: content, contains_liquid: liquid, fragile,
-        parcel_length_cm: parseFloat(length), parcel_width_cm: parseFloat(width),
-        parcel_height_cm: parseFloat(height), parcel_weight_kg: parseFloat(weight),
-        whatsapp_phone: waPhone
-      })
+      body: JSON.stringify(body),
     });
     const data = await res.json();
-    if (res.ok && data.tracking_number) {
+    if (data.ok && data.tracking_number) {
       router.push(`/customer/console/parcels/${data.tracking_number}`);
     } else {
-      setError(data.error ?? "Failed to create parcel.");
+      setError(data.error ?? "Booking failed. Please try again.");
       setSubmitting(false);
     }
   };
@@ -135,216 +162,357 @@ export default function NewParcel() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <header className="bg-slate-900 border-b border-slate-800 px-6 py-4 flex items-center gap-4">
-        <Link href="/customer/console" className="text-slate-500 hover:text-slate-300 text-sm">← Back</Link>
-        <h1 className="text-xl font-bold text-white">New Parcel Booking</h1>
+        <Link href="/customer/console" className="text-slate-500 hover:text-slate-300 text-sm">← Console</Link>
+        <h1 className="text-xl font-bold text-white">Book Parcel</h1>
+        <div className="ml-auto text-xs text-slate-500">Step {step} of 5</div>
       </header>
+      <div className="h-1 bg-slate-800">
+        <div className="h-full bg-blue-500 transition-all" style={{ width: `${(step / 5) * 100}%` }} />
+      </div>
 
-      <main className="max-w-2xl mx-auto px-6 py-8">
-        {/* Stepper */}
-        <div className="flex items-center gap-0 mb-8">
-          {STEPS.map((s, i) => (
-            <div key={s} className="flex items-center flex-1">
-              <div className={`flex items-center gap-2 ${i <= step ? "text-blue-400" : "text-slate-600"}`}>
-                <div className={`w-7 h-7 rounded-full border-2 flex items-center justify-center text-xs font-bold flex-shrink-0
-                  ${i < step ? "bg-blue-600 border-blue-600 text-white" :
-                    i === step ? "border-blue-400 text-blue-400" : "border-slate-600 text-slate-600"}`}>
-                  {i < step ? "✓" : i + 1}
-                </div>
-                <span className="text-xs hidden sm:block">{s}</span>
-              </div>
-              {i < STEPS.length - 1 && <div className={`flex-1 h-0.5 mx-2 ${i < step ? "bg-blue-600" : "bg-slate-700"}`} />}
-            </div>
-          ))}
-        </div>
+      <main className="max-w-2xl mx-auto px-6 py-8 space-y-6">
+        {error && <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-300">{error}</div>}
 
-        {error && <div className="mb-4 bg-red-500/10 border border-red-500/30 text-red-300 rounded-xl px-4 py-3 text-sm">{error}</div>}
-
-        {/* Step 0: Route & Slot */}
-        {step === 0 && (
-          <div className="space-y-5">
+        {/* ── STEP 1: Service + Route + Date ── */}
+        {step === 1 && (
+          <div className="space-y-6">
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">Select Route</label>
-              <div className="grid grid-cols-1 gap-2">
-                {routes.map(r => (
-                  <button key={r.id} onClick={() => { setSelectedRoute(r); setSelectedSlot(null); setSlots([]); if (slotDate) loadSlots(r.id, slotDate); }}
-                    className={`text-left p-4 rounded-xl border transition-colors ${selectedRoute?.id === r.id ? "border-blue-500 bg-blue-500/10" : "border-slate-700 bg-slate-900 hover:border-slate-600"}`}>
-                    <p className="font-semibold text-white">{r.origin_city} → {r.destination_city}</p>
-                    <p className="text-xs text-slate-400 mt-0.5">Route: {r.route_code} · Max {r.max_transit_hours}h transit · RM50/parcel</p>
+              <h2 className="text-lg font-semibold text-white mb-4">Select Service</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {([
+                  ["Same-Day Express", "RM50/carton", "Fixed departure slots", "Max 30×30×30cm · 15kg", "Arrives same day"],
+                  ["Next-Day Economy", "RM1/kg (min RM50)", "Consolidation shipment", "Max 750kg/pallet · Any size", "Moves next business day"],
+                ] as [string, string, string, string, string][]).map(([type, priceLabel, mode, limits, eta]) => (
+                  <button key={type} onClick={() => { setServiceType(type as "Same-Day Express" | "Next-Day Economy"); setRouteId(""); setSlotId(""); }}
+                    className={`text-left rounded-xl border-2 p-5 transition-colors ${serviceType === type ? "border-blue-500 bg-blue-500/10" : "border-slate-700 bg-slate-900 hover:border-slate-500"}`}>
+                    <p className="font-bold text-white">{type}</p>
+                    <p className="text-blue-400 font-semibold text-sm mt-1">{priceLabel}</p>
+                    <p className="text-slate-400 text-xs mt-2">{mode}</p>
+                    <p className="text-slate-500 text-xs">{limits}</p>
+                    <p className="text-slate-600 text-xs">{eta}</p>
                   </button>
                 ))}
               </div>
             </div>
 
-            {selectedRoute && (
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">Select Date</label>
-                <input type="date" value={slotDate} min={today} max={maxDate}
-                  onChange={e => { setSlotDate(e.target.value); setSelectedSlot(null); if (selectedRoute) loadSlots(selectedRoute.id, e.target.value); }}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500" />
-              </div>
-            )}
+            <div>
+              <label className="block text-sm text-slate-300 mb-2 font-medium">Select Route</label>
+              <select value={routeId} onChange={e => { setRouteId(e.target.value); setSlotId(""); setSlots([]); }}
+                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500">
+                <option value="">Choose route...</option>
+                {filteredRoutes.map(r => (
+                  <option key={r.id} value={r.id}>{r.origin_city} → {r.destination_city} (max {r.max_transit_hours}h)</option>
+                ))}
+              </select>
+            </div>
 
-            {slots.length > 0 && (
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">Select Departure Slot</label>
-                <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-sm text-slate-300 mb-2 font-medium">
+                {serviceType === "Same-Day Express" ? "Departure Date" : "Drop-off Date"}
+              </label>
+              <input type="date" value={date} min={todayStr()} max={maxDateStr()}
+                onChange={e => { setDate(e.target.value); setSlotId(""); setSlots([]); }}
+                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500" />
+              <p className="text-xs text-slate-500 mt-1">
+                {serviceType === "Same-Day Express"
+                  ? "Mon–Sat only. PG↔KL slots: 10:00, 11:00, 12:00 · KL↔JB slots: 10:00, 11:00, 12:00, 13:00"
+                  : "Mon–Sat only. Your cargo will be consolidated and move on the next business day."}
+              </p>
+            </div>
+
+            <button onClick={() => { if (!routeId || !date) { setError("Select a route and date."); return; } setError(""); setStep(2); }}
+              className="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl text-sm font-semibold transition-colors">
+              Continue →
+            </button>
+          </div>
+        )}
+
+        {/* ── STEP 2: Slot (SDE) / ETA (NDE) ── */}
+        {step === 2 && (
+          <div className="space-y-4">
+            <h2 className="text-lg font-semibold text-white">
+              {serviceType === "Same-Day Express" ? "Select Departure Slot" : "Confirm Drop-off Details"}
+            </h2>
+
+            {serviceType === "Same-Day Express" && (
+              <>
+                {loadingSlots && <p className="text-slate-500 text-sm">Loading available slots...</p>}
+                {!loadingSlots && slots.length === 0 && (
+                  <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 text-amber-300 text-sm">
+                    No open slots for this date and route. Try a different date.
+                  </div>
+                )}
+                <div className="space-y-2">
                   {slots.map(s => (
-                    <button key={s.id} onClick={() => setSelectedSlot(s)}
-                      className={`p-3 rounded-xl border text-left transition-colors ${selectedSlot?.id === s.id ? "border-blue-500 bg-blue-500/10" : "border-slate-700 bg-slate-900 hover:border-slate-600"}`}>
-                      <p className="font-semibold text-white">{s.departure_time.slice(0,5)}</p>
-                      <p className="text-xs text-slate-400">
-                        {s.same_day_arrival ? `Arrives ~${s.expected_arrival_time?.slice(0,5) ?? "—"}` : "Next day"}
-                      </p>
-                      <p className="text-xs text-slate-500 mt-0.5">{s.slot_reference}</p>
+                    <button key={s.id} onClick={() => setSlotId(s.id)}
+                      className={`w-full text-left rounded-xl border-2 p-4 transition-colors ${slotId === s.id ? "border-blue-500 bg-blue-500/10" : "border-slate-700 bg-slate-900 hover:border-slate-500"}`}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-bold text-white text-lg">{s.departure_time.slice(0, 5)}</p>
+                          {s.expected_arrival_time && (
+                            <p className="text-sm text-slate-400">ETA {s.expected_arrival_time.slice(0, 5)} · {s.same_day_arrival ? "Same day ✓" : "Next day"}</p>
+                          )}
+                          <p className="text-xs text-slate-600 font-mono mt-0.5">{s.slot_reference}</p>
+                        </div>
+                        <span className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-full">Open</span>
+                      </div>
                     </button>
                   ))}
                 </div>
-                <p className="text-xs text-slate-500 mt-2">
-                  ⚠ Parcels not received before departure time will miss the slot. Warehouse closes at 19:00.
+                <p className="text-xs text-slate-500">⚠ Parcels must be received at the warehouse before departure time. Warehouse closes at 19:00.</p>
+              </>
+            )}
+
+            {serviceType === "Next-Day Economy" && selectedRoute && (
+              <div className="bg-slate-900 border border-slate-700 rounded-xl p-5 space-y-3">
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Drop-off warehouse</p>
+                  <p className="font-bold text-white">{selectedRoute.origin_warehouse?.warehouse_name ?? `${selectedRoute.origin_city} Warehouse`}</p>
+                  <p className="text-sm text-slate-400">{selectedRoute.origin_warehouse?.full_address ?? `${selectedRoute.origin_city}, Malaysia`}</p>
+                  <p className="text-xs text-slate-500 mt-1">Mon–Sat · 10:00–19:00</p>
+                </div>
+                <div className="border-t border-slate-700 pt-3">
+                  <p className="text-xs text-slate-500">Drop-off date: <span className="text-white">{date}</span></p>
+                  <p className="text-sm text-emerald-400 font-semibold mt-1">Moves next business day</p>
+                  <p className="text-xs text-slate-500 mt-1">Subject to route consolidation. Nexum will notify via WhatsApp once in transit.</p>
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button onClick={() => setStep(1)} className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-300 py-3 rounded-xl text-sm font-medium transition-colors">← Back</button>
+              <button onClick={() => {
+                if (serviceType === "Same-Day Express" && !slotId) { setError("Select a departure slot."); return; }
+                setError(""); setStep(3);
+              }} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl text-sm font-semibold transition-colors">
+                Continue →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── STEP 3: Sender / Receiver ── */}
+        {step === 3 && (
+          <div className="space-y-5">
+            <h2 className="text-lg font-semibold text-white">Sender & Receiver</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+                <h3 className="text-sm font-semibold text-slate-300">Sender (You)</h3>
+                <Field label="Full Name *"                        value={senderName}    onChange={setSenderName}    placeholder="Ahmad bin Ali" />
+                <Field label="Phone / WhatsApp *"                 value={senderContact} onChange={setSenderContact} placeholder="+60111234567" />
+                <Field label="IC Number (stored masked)"          value={senderIC}      onChange={setSenderIC}      placeholder="901234-12-1234" />
+              </div>
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+                <h3 className="text-sm font-semibold text-slate-300">Receiver</h3>
+                <Field label="Full Name *"                        value={receiverName}    onChange={setReceiverName}    placeholder="Siti binti Hassan" />
+                <Field label="Phone *"                            value={receiverContact} onChange={setReceiverContact} placeholder="+60127654321" />
+                <Field label="IC Number (stored masked)"          value={receiverIC}      onChange={setReceiverIC}      placeholder="851111-10-1234" />
+              </div>
+            </div>
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+              <Field label="Receiver WhatsApp for status updates (optional)" value={whatsapp} onChange={setWhatsapp} placeholder="+60127654321" />
+              <p className="text-[10px] text-slate-600 mt-2">IC numbers are stored masked — only admin can view full IC. WhatsApp updates sent manually when available.</p>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setStep(2)} className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-300 py-3 rounded-xl text-sm font-medium transition-colors">← Back</button>
+              <button onClick={() => {
+                if (!senderName || !senderContact || !receiverName || !receiverContact) { setError("Fill in all required fields."); return; }
+                setError(""); setStep(4);
+              }} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl text-sm font-semibold transition-colors">
+                Continue →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── STEP 4: Cargo ── */}
+        {step === 4 && (
+          <div className="space-y-5">
+            <h2 className="text-lg font-semibold text-white">{serviceType === "Same-Day Express" ? "Parcel Details" : "Cargo Details"}</h2>
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-4">
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Commodity / Content *</label>
+                <input value={content} onChange={e => setContent(e.target.value)}
+                  placeholder="e.g. Electronic accessories, clothing samples"
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+                <p className="text-[10px] text-slate-600 mt-1">
+                  No illegal, dangerous, flammable, perishable, cash, jewellery, live animals, weapons, controlled substances, or high-value goods.
+                </p>
+              </div>
+              <div className="flex gap-3">
+                {([["Fragile", fragile, setFragile], ["Contains Liquid", liquid, setLiquid]] as [string, boolean, (v: boolean) => void][]).map(([label, val, set]) => (
+                  <button key={String(label)} onClick={() => set(!val)}
+                    className={`flex-1 py-2.5 rounded-lg border text-sm font-medium transition-colors ${val ? "border-amber-500 bg-amber-500/10 text-amber-300" : "border-slate-700 bg-slate-800 text-slate-400"}`}>
+                    {String(label)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {serviceType === "Same-Day Express" && (
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-4">
+                <h3 className="text-sm font-semibold text-slate-300">Parcel Dimensions (max 30×30×30cm · 15kg per parcel)</h3>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Number of Parcels</label>
+                  <input type="number" min={1} max={50} value={parcelCount} onChange={e => setParcelCount(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
+                  <p className="text-xs text-slate-600 mt-1">All parcels in one booking must have same dimensions and weight.</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  {([["Length (cm)", length, setLength], ["Width (cm)", width, setWidth], ["Height (cm)", height, setHeight], ["Weight per parcel (kg)", weight, setWeight]] as [string, string, (v: string) => void][]).map(([label, val, set]) => (
+                    <div key={String(label)}>
+                      <label className="block text-xs text-slate-400 mb-1">{label}</label>
+                      <input type="number" step="0.1" value={String(val)} onChange={e => set(e.target.value)}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
+                    </div>
+                  ))}
+                </div>
+                {(parseFloat(length) > 30 || parseFloat(width) > 30 || parseFloat(height) > 30 || parseFloat(weight) > 15) && (
+                  <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 text-xs text-amber-300">
+                    ⚠ Exceeds standard SDE limits (30×30×30cm / 15kg). Admin will contact you with a manual quote.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {serviceType === "Next-Day Economy" && (
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-4">
+                <h3 className="text-sm font-semibold text-slate-300">Cargo Weight (max {selectedRoute?.max_pallet_weight_kg ?? 750}kg per pallet)</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Number of Pallets</label>
+                    <input type="number" min={0} value={palletCount} onChange={e => setPalletCount(parseInt(e.target.value) || 0)}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Total Weight (kg)</label>
+                    <input type="number" step="0.1" value={palletWeight} onChange={e => setPalletWeight(e.target.value)}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
+                  </div>
+                </div>
+                {totalWeightNum > (selectedRoute?.max_pallet_weight_kg ?? 750) * Math.max(palletCount, 1) && (
+                  <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 text-xs text-amber-300">
+                    ⚠ Exceeds pallet weight limit. Admin will contact you for a manual quote.
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button onClick={() => setStep(3)} className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-300 py-3 rounded-xl text-sm font-medium transition-colors">← Back</button>
+              <button onClick={() => {
+                if (!content) { setError("Declare the commodity content."); return; }
+                if (isExcluded(content)) { setError("Declared goods are excluded from Console Transport."); return; }
+                if (serviceType === "Same-Day Express" && !weight) { setError("Enter parcel weight."); return; }
+                if (serviceType === "Next-Day Economy" && !palletWeight) { setError("Enter total cargo weight."); return; }
+                setError(""); setStep(5);
+              }} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl text-sm font-semibold transition-colors">
+                Continue →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── STEP 5: Review + Payment ── */}
+        {step === 5 && selectedRoute && (
+          <div className="space-y-5">
+            <h2 className="text-lg font-semibold text-white">Review & Pay</h2>
+
+            <div className="bg-slate-900 border border-slate-700 rounded-xl p-5 space-y-3 text-sm">
+              {([
+                ["Service",  serviceType],
+                ["Route",    `${selectedRoute.origin_city} → ${selectedRoute.destination_city}`],
+                ...(selectedSlot ? [["Slot", `${date} ${selectedSlot.departure_time.slice(0, 5)} (${selectedSlot.slot_reference})`]] : []),
+                ...(serviceType === "Next-Day Economy" ? [["Drop-off", `${date} · Moves next business day`]] : []),
+                ["Sender",   `${senderName} (${senderContact})`],
+                ["Receiver", `${receiverName} (${receiverContact})`],
+                ["Content",  content],
+                ...(serviceType === "Same-Day Express" ? [["Parcels / Weight", `${parcelCount} × ${weight || "—"}kg`]] : []),
+                ...(serviceType === "Next-Day Economy" ? [["Pallets / Weight", `${palletCount} pallet(s) · ${palletWeight}kg`]] : []),
+              ] as [string, string][]).map(([l, v]) => (
+                <div key={l} className="flex justify-between gap-4">
+                  <span className="text-slate-400 shrink-0">{l}</span>
+                  <span className="text-slate-200 text-right">{v}</span>
+                </div>
+              ))}
+              <div className="border-t border-slate-700 pt-3 flex justify-between items-baseline">
+                <span className="text-slate-300 font-semibold">Total</span>
+                <span className="text-2xl font-bold text-blue-400">RM {price.toFixed(2)}</span>
+              </div>
+              <p className="text-xs text-slate-500">
+                {serviceType === "Same-Day Express"
+                  ? `RM${selectedRoute.same_day_price_per_carton} × ${parcelCount} parcel(s)`
+                  : `max(RM${selectedRoute.next_day_price_per_kg}/kg × ${totalWeightNum}kg, RM${selectedRoute.next_day_minimum_charge} min)`}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-sm font-semibold text-slate-300 mb-3">Payment Method</p>
+              <div className="grid grid-cols-2 gap-3">
+                <button onClick={() => setPaymentMode("wallet")}
+                  className={`rounded-xl border-2 p-4 text-left transition-colors ${paymentMode === "wallet" ? "border-blue-500 bg-blue-500/10" : "border-slate-700 bg-slate-900"}`}>
+                  <p className="text-sm font-semibold text-white">Wallet</p>
+                  {wallet !== null && (
+                    <p className={`text-xs mt-1 ${wallet >= price ? "text-emerald-400" : "text-red-400"}`}>
+                      Balance: RM{wallet.toFixed(2)}{wallet < price ? " (insufficient)" : ""}
+                    </p>
+                  )}
+                </button>
+                <button onClick={() => setPaymentMode("proof")}
+                  className={`rounded-xl border-2 p-4 text-left transition-colors ${paymentMode === "proof" ? "border-blue-500 bg-blue-500/10" : "border-slate-700 bg-slate-900"}`}>
+                  <p className="text-sm font-semibold text-white">Payment Proof</p>
+                  <p className="text-xs text-slate-500 mt-1">Upload receipt · Admin verifies within 24h</p>
+                </button>
+              </div>
+            </div>
+
+            {paymentMode === "wallet" && wallet !== null && wallet < price && (
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 text-sm text-amber-300">
+                Insufficient balance. Top up RM{(price - wallet).toFixed(2)} more, or choose Payment Proof.
+                <Link href="/customer/console" className="block text-amber-400 font-semibold mt-1 text-xs">Top Up Wallet →</Link>
+              </div>
+            )}
+
+            {paymentMode === "proof" && (
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Payment Receipt URL</label>
+                <input value={proofUrl} onChange={e => setProofUrl(e.target.value)}
+                  placeholder="https://drive.google.com/..."
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
+                <p className="text-xs text-slate-500 mt-1">
+                  Transfer RM{price.toFixed(2)} to Nexum and paste the receipt link. Admin will verify and activate your booking.
                 </p>
               </div>
             )}
-            {slotDate && selectedRoute && slots.length === 0 && (
-              <p className="text-sm text-slate-500">No open slots for this date. Please choose another date or route.</p>
-            )}
-          </div>
-        )}
 
-        {/* Step 1: Sender & Receiver */}
-        {step === 1 && (
-          <div className="space-y-5">
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
-              <h3 className="text-sm font-semibold text-slate-300">Sender Information</h3>
-              <Input label="Full Name *" value={senderName} onChange={setSenderName} />
-              <Input label="Contact / Phone *" value={senderContact} onChange={setSenderContact} />
-              <Input label="IC / Passport (optional, masked on label)" value={senderIC} onChange={setSenderIC} />
+            <div className="bg-slate-800/50 rounded-lg p-3 text-xs text-slate-500">
+              By booking you confirm: goods declared accurately · label will be printed and affixed before drop-off ·
+              Nexum provides warehouse-to-warehouse console transport coordination via APAD-verified providers ·
+              not a guaranteed courier or insured delivery service.
             </div>
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
-              <h3 className="text-sm font-semibold text-slate-300">Receiver Information</h3>
-              <Input label="Full Name *" value={receiverName} onChange={setReceiverName} />
-              <Input label="Contact / Phone *" value={receiverContact} onChange={setReceiverContact} />
-              <Input label="IC / Passport (optional, masked on label)" value={receiverIC} onChange={setReceiverIC} />
-            </div>
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-              <Input label="WhatsApp number for status updates (optional)" value={waPhone} onChange={setWaPhone} placeholder="+601XXXXXXXX" />
+
+            <div className="flex gap-3">
+              <button onClick={() => setStep(4)} className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-300 py-3 rounded-xl text-sm font-medium transition-colors">← Back</button>
+              <button onClick={submit}
+                disabled={submitting || (paymentMode === "wallet" && (wallet ?? 0) < price) || (paymentMode === "proof" && !proofUrl)}
+                className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl text-sm font-bold disabled:opacity-50 transition-colors">
+                {submitting ? "Booking..." : `Confirm & Pay RM${price.toFixed(2)}`}
+              </button>
             </div>
           </div>
         )}
-
-        {/* Step 2: Parcel Details */}
-        {step === 2 && (
-          <div className="space-y-5">
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
-              <h3 className="text-sm font-semibold text-slate-300">Goods Declaration</h3>
-              <Input label="Content Description *" value={content} onChange={setContent}
-                placeholder="e.g. Electronic accessories, clothing, documents" />
-              <div className="grid grid-cols-2 gap-3">
-                <Toggle label="🧴 Contains Liquid" checked={liquid} onChange={setLiquid} />
-                <Toggle label="⚠ Fragile Item" checked={fragile} onChange={setFragile} />
-              </div>
-              {(liquid || fragile) && (
-                <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs text-amber-300">
-                  Fragile or liquid items may require additional handling consideration. By proceeding, you acknowledge that Nexum Console Transport coordinates prepaid parcel movement — no insurance coverage unless separately arranged.
-                </div>
-              )}
-              <p className="text-xs text-slate-500">
-                General goods only. We do not accept: illegal items, dangerous goods, flammable materials,
-                perishables, temperature-controlled goods, cash, jewellery, live animals, controlled medicines,
-                weapons, or high-value items.
-              </p>
-            </div>
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
-              <h3 className="text-sm font-semibold text-slate-300">Dimensions & Weight (max 30×30×30 cm, 15 kg)</h3>
-              <div className="grid grid-cols-3 gap-3">
-                <Input label="Length (cm)" value={length} onChange={setLength} type="number" placeholder="≤30" />
-                <Input label="Width (cm)"  value={width}  onChange={setWidth}  type="number" placeholder="≤30" />
-                <Input label="Height (cm)" value={height} onChange={setHeight} type="number" placeholder="≤30" />
-              </div>
-              <Input label="Weight (kg, max 15)" value={weight} onChange={setWeight} type="number" placeholder="≤15" />
-            </div>
-          </div>
-        )}
-
-        {/* Step 3: Review */}
-        {step === 3 && (
-          <div className="space-y-4">
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3 text-sm">
-              <h3 className="text-slate-300 font-semibold mb-3">Booking Summary</h3>
-              <Row label="Route"    value={`${selectedRoute?.origin_city} → ${selectedRoute?.destination_city}`} />
-              <Row label="Slot"     value={`${slotDate} ${selectedSlot?.departure_time.slice(0,5)} (${selectedSlot?.slot_reference})`} />
-              <Row label="Sender"   value={`${senderName} · ${senderContact}`} />
-              <Row label="Receiver" value={`${receiverName} · ${receiverContact}`} />
-              <Row label="Content"  value={content} />
-              <Row label="Size"     value={`${length}×${width}×${height} cm · ${weight} kg`} />
-              {liquid  && <Row label="Liquid"  value="Yes — noted" />}
-              {fragile && <Row label="Fragile" value="Yes — noted" />}
-              <hr className="border-slate-700" />
-              <Row label="Parcel fee" value="RM 50.00" bold />
-              <Row label="Payment method" value="Customer Wallet" />
-              <Row label="Wallet balance" value={`RM ${wallet.toFixed(2)}`} color={wallet < 50 ? "text-red-400" : "text-emerald-400"} />
-            </div>
-            {wallet < 50 && (
-              <div className="bg-red-500/10 border border-red-500/30 text-red-300 rounded-xl px-4 py-3 text-sm">
-                Insufficient wallet balance. Please top up at least RM100 to proceed.
-              </div>
-            )}
-            <p className="text-xs text-slate-600">
-              By booking, you confirm the goods are general goods only and comply with our acceptance policy.
-              This is a prepaid parcel movement via an approved transport provider.
-            </p>
-          </div>
-        )}
-
-        {/* Navigation */}
-        <div className="flex gap-3 mt-6">
-          {step > 0 && (
-            <button onClick={() => { setStep(s => s - 1); setError(""); }}
-              className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 py-3 rounded-xl font-medium transition-colors">
-              ← Back
-            </button>
-          )}
-          {step < STEPS.length - 1 ? (
-            <button onClick={next}
-              className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl font-semibold transition-colors">
-              Next →
-            </button>
-          ) : (
-            <button onClick={submit} disabled={submitting || wallet < 50}
-              className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-xl font-semibold transition-colors disabled:opacity-50">
-              {submitting ? "Booking..." : "Confirm & Pay RM50"}
-            </button>
-          )}
-        </div>
       </main>
     </div>
   );
 }
 
-function Input({ label, value, onChange, type = "text", placeholder = "" }:
-  { label: string; value: string; onChange: (v: string) => void; type?: string; placeholder?: string }) {
+function Field({ label, value, onChange, placeholder = "" }:
+  { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
   return (
     <div>
       <label className="block text-xs text-slate-400 mb-1">{label}</label>
-      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+      <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
         className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
-    </div>
-  );
-}
-
-function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button onClick={() => onChange(!checked)}
-      className={`p-3 rounded-xl border text-sm font-medium text-left transition-colors ${checked ? "border-amber-500 bg-amber-500/10 text-amber-300" : "border-slate-700 bg-slate-800 text-slate-400"}`}>
-      {label}
-    </button>
-  );
-}
-
-function Row({ label, value, bold = false, color = "" }: { label: string; value: string; bold?: boolean; color?: string }) {
-  return (
-    <div className="flex justify-between">
-      <span className="text-slate-400">{label}</span>
-      <span className={`${bold ? "font-bold text-white" : "text-slate-200"} ${color}`}>{value}</span>
     </div>
   );
 }

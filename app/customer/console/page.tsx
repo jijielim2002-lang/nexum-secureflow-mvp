@@ -20,6 +20,7 @@ interface Parcel {
   id: string; tracking_number: string; parcel_status: string; payment_status: string;
   sender_name: string; receiver_name: string; parcel_weight_kg: number;
   commodity_content: string; created_at: string;
+  service_type?: string; price_amount?: number;
   console_routes?: { origin_city: string; destination_city: string };
   console_route_slots?: { slot_date: string; departure_time: string };
 }
@@ -46,6 +47,7 @@ export default function CustomerConsole() {
   const [wallet, setWallet]   = useState<Wallet | null>(null);
   const [loading, setLoading] = useState(true);
   const [topupAmt, setTopupAmt] = useState("");
+  const [topupProof, setTopupProof] = useState("");
   const [topupMsg, setTopupMsg] = useState("");
   const [topupLoading, setTopupLoading] = useState(false);
   const [tab, setTab] = useState<"active"|"all">("active");
@@ -69,16 +71,21 @@ export default function CustomerConsole() {
   const handleTopup = async () => {
     const amt = parseFloat(topupAmt);
     if (isNaN(amt) || amt < 100) { setTopupMsg("Minimum top-up is RM100."); return; }
+    if (!topupProof.trim()) { setTopupMsg("Please paste your payment receipt URL."); return; }
     setTopupLoading(true); setTopupMsg("");
     const token = await getToken();
     const res = await fetch("/api/console/wallets/topup", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ amount: amt, wallet_type: "Customer" })
+      body: JSON.stringify({ amount: amt, wallet_type: "Customer", payment_proof_url: topupProof.trim() })
     });
     const data = await res.json();
-    if (data.ok) { setTopupMsg(`✓ RM${amt.toFixed(2)} added to wallet.`); setTopupAmt(""); load(); }
-    else setTopupMsg(data.error ?? "Top-up failed.");
+    if (data.ok) {
+      setTopupMsg(`✓ Top-up request submitted for RM${amt.toFixed(2)}. Your balance will be updated after admin verifies your payment.`);
+      setTopupAmt(""); setTopupProof("");
+    } else {
+      setTopupMsg(data.error ?? "Top-up failed.");
+    }
     setTopupLoading(false);
   };
 
@@ -111,26 +118,34 @@ export default function CustomerConsole() {
             </p>
             <p className="text-xs text-slate-500 mt-1">
               Reserved: RM {Number(wallet?.reserved_balance ?? 0).toFixed(2)} &nbsp;·&nbsp;
-              Each parcel costs RM50.00 (prepaid)
+              SDE: RM50/parcel · NDE: RM1/kg (min RM50) · Prepaid
             </p>
-            <div className="mt-4 flex gap-2">
-              <input value={topupAmt} onChange={e => setTopupAmt(e.target.value)}
-                placeholder="Amount (min RM100)"
-                className="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
-              <button onClick={handleTopup} disabled={topupLoading}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 transition-colors">
-                {topupLoading ? "..." : "Top Up"}
-              </button>
+            <div className="mt-4 space-y-2">
+              <div className="flex gap-2">
+                <input value={topupAmt} onChange={e => setTopupAmt(e.target.value)}
+                  placeholder="Amount (min RM100)"
+                  type="number" min="100"
+                  className="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+              </div>
+              <div className="flex gap-2">
+                <input value={topupProof} onChange={e => setTopupProof(e.target.value)}
+                  placeholder="Payment receipt URL (Google Drive / WhatsApp link)"
+                  className="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+                <button onClick={handleTopup} disabled={topupLoading}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 transition-colors whitespace-nowrap">
+                  {topupLoading ? "..." : "Submit Request"}
+                </button>
+              </div>
+              <p className="text-xs text-slate-500">Transfer to Nexum bank account, then paste your receipt URL above. Admin will verify and credit your wallet.</p>
             </div>
             {topupMsg && <p className={`mt-2 text-xs ${topupMsg.startsWith("✓") ? "text-emerald-400" : "text-red-400"}`}>{topupMsg}</p>}
           </div>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
             <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide">Pricing</p>
             <div className="text-sm space-y-1 text-slate-300">
-              <p>RM 50 <span className="text-slate-500">/ parcel</span></p>
-              <p className="text-xs text-slate-500">Max 30×30×30 cm · 15 kg</p>
-              <p className="text-xs text-slate-500">General goods only · Prepaid</p>
-              <p className="text-xs text-slate-500">Warehouse-to-warehouse transport coordination</p>
+              <p>SDE: <span className="font-semibold">RM50</span><span className="text-slate-500">/parcel · max 30×30×30cm · 15kg</span></p>
+              <p>NDE: <span className="font-semibold">RM1/kg</span><span className="text-slate-500"> (min RM50) · up to 750kg/pallet</span></p>
+              <p className="text-xs text-slate-500">Warehouse-to-warehouse · Prepaid</p>
             </div>
             <Link href="/customer/console/new"
               className="block text-center bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium py-2 rounded-lg transition-colors mt-2">
@@ -174,6 +189,11 @@ export default function CustomerConsole() {
                       <span className={`text-xs px-2 py-0.5 rounded-full border ${STATUS_COLOR[p.parcel_status] ?? "bg-slate-700 text-slate-400"}`}>
                         {p.parcel_status}
                       </span>
+                      {p.service_type && (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${p.service_type === "Next-Day Economy" ? "bg-indigo-500/15 text-indigo-300" : "bg-blue-500/15 text-blue-300"}`}>
+                          {p.service_type === "Next-Day Economy" ? "NDE" : "SDE"}
+                        </span>
+                      )}
                     </div>
                     <p className="text-sm font-medium text-white mt-1 truncate">
                       {p.console_routes?.origin_city} → {p.console_routes?.destination_city}
@@ -188,7 +208,7 @@ export default function CustomerConsole() {
                     )}
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="text-sm font-bold text-white">RM 50</p>
+                    <p className="text-sm font-bold text-white">RM {p.price_amount ? Number(p.price_amount).toFixed(2) : "50.00"}</p>
                     <p className="text-xs text-slate-500">{p.created_at.slice(0,10)}</p>
                   </div>
                 </div>

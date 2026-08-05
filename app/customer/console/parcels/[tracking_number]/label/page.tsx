@@ -31,10 +31,14 @@ export default function ParcelLabel({ params }: { params: Promise<{ tracking_num
 
   if (!parcel) return <div style={{ padding: 20 }}>Loading label...</div>;
 
-  const route = parcel.console_routes as { origin_city?: string; destination_city?: string; route_code?: string } | undefined;
-  const slot  = parcel.console_route_slots as { slot_date?: string; departure_time?: string } | undefined;
-  const originWh = parcel.origin_wh as { warehouse_name?: string; full_address?: string } | undefined;
-  const destWh   = parcel.dest_wh   as { warehouse_name?: string; full_address?: string } | undefined;
+  const route      = parcel.console_routes as { origin_city?: string; destination_city?: string; route_code?: string } | undefined;
+  const slot       = parcel.console_route_slots as { slot_date?: string; departure_time?: string } | undefined;
+  const originWh   = parcel.origin_wh as { warehouse_name?: string; full_address?: string } | undefined;
+  const destWh     = parcel.dest_wh   as { warehouse_name?: string; full_address?: string } | undefined;
+  const serviceType = String(parcel.service_type ?? "Same-Day Express");
+  const isNDE       = serviceType === "Next-Day Economy";
+  const palletCount  = parcel.pallet_count  ? Number(parcel.pallet_count)  : null;
+  const palletWeight = parcel.pallet_weight_kg ? Number(parcel.pallet_weight_kg) : null;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(tracking_number)}&format=png`;
 
   return (
@@ -72,6 +76,9 @@ export default function ParcelLabel({ params }: { params: Promise<{ tracking_num
           <div style={{ textAlign: "right" }}>
             <p style={{ fontSize: 10, margin: 0, color: "#555" }}>Route</p>
             <p style={{ fontWeight: 900, fontSize: 16, margin: 0 }}>{route?.route_code ?? "—"}</p>
+            <p style={{ fontSize: 9, margin: "2px 0 0", background: isNDE ? "#6366f1" : "#2563eb", color: "white", padding: "1px 6px", borderRadius: 2, display: "inline-block" }}>
+              {isNDE ? "NDE" : "SDE"}
+            </p>
           </div>
         </div>
 
@@ -86,9 +93,14 @@ export default function ParcelLabel({ params }: { params: Promise<{ tracking_num
             <p style={{ fontWeight: 700, fontSize: 13, margin: 0 }}>
               {route?.origin_city ?? "—"} → {route?.destination_city ?? "—"}
             </p>
-            {slot && (
+            {slot && !isNDE && (
               <p style={{ fontSize: 10, margin: "4px 0 0", color: "#333" }}>
                 Slot: {slot.slot_date} {slot.departure_time?.slice(0,5)}
+              </p>
+            )}
+            {isNDE && (
+              <p style={{ fontSize: 10, margin: "4px 0 0", color: "#333" }}>
+                Service: Next-Day Economy
               </p>
             )}
           </div>
@@ -147,7 +159,12 @@ export default function ParcelLabel({ params }: { params: Promise<{ tracking_num
             </div>
             <div>
               <p style={{ fontSize: 8, margin: "0 0 2px", color: "#555", textTransform: "uppercase" }}>Weight</p>
-              <p style={{ fontWeight: 700, margin: 0 }}>{String(parcel.parcel_weight_kg ?? "—")} kg</p>
+              {isNDE && palletWeight !== null
+                ? <p style={{ fontWeight: 700, margin: 0 }}>{palletWeight} kg</p>
+                : <p style={{ fontWeight: 700, margin: 0 }}>{String(parcel.parcel_weight_kg ?? "—")} kg</p>}
+              {isNDE && palletCount !== null && (
+                <p style={{ fontSize: 8, margin: "1px 0 0", color: "#555" }}>{palletCount} pallet(s)</p>
+              )}
             </div>
             <div>
               {parcel.fragile && <p style={{ background: "#fbbf24", color: "#000", fontWeight: 700, padding: "2px 6px", borderRadius: 2, fontSize: 9, margin: 0 }}>FRAGILE</p>}

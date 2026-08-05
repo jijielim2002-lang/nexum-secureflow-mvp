@@ -193,6 +193,26 @@ export async function directTopUp(
   return { ok: true };
 }
 
+// Customer-initiated top-up: creates a Pending transaction only.
+// Admin must approve (via directTopUp) after verifying the payment proof.
+export async function submitTopUpRequest(
+  companyId: string, amount: number, walletType: 'Customer' | 'Supplier',
+  paymentProofUrl: string
+): Promise<{ ok: boolean; error?: string }> {
+  if (amount < 100) return { ok: false, error: 'Minimum top-up is RM100.' };
+  if (!paymentProofUrl?.trim()) return { ok: false, error: 'Payment proof URL is required.' };
+  const db = adminClient();
+  const walletId = await getOrCreateWallet(companyId, walletType);
+  await db.from('console_wallet_transactions').insert({
+    wallet_id: walletId, company_id: companyId,
+    transaction_type: 'Top Up', amount, status: 'Pending',
+    reference_type: 'payment_proof',
+    reference_id: paymentProofUrl.trim(),
+    description: `Top-up request RM${amount.toFixed(2)} — pending admin approval. Proof: ${paymentProofUrl.trim()}`
+  });
+  return { ok: true };
+}
+
 // ── Parcel Creation ───────────────────────────────────────────────────────────
 
 export async function createConsoleParcel(

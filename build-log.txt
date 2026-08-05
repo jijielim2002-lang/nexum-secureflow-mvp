@@ -1,0 +1,152 @@
+
+> nexum-secureflow-mvp@0.1.0 build
+> next build
+
+▲ Next.js 16.2.6 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+Turbopack build encountered 1 warnings:
+./lib/extraction/pdf-text.ts:19:22
+Module not found: Can't resolve 'pdf-parse/lib/pdf-parse.js'
+  [90m17 |[0m     [90m// import time (which fails on Vercel's read-only filesystem).[0m
+  [90m18 |[0m     [90m// eslint-disable-next-line @typescript-eslint/no-require-imports[0m
+[31m[1m>[0m [90m19 |[0m     [36mconst[0m pdfParse = require([32m"pdf-parse/lib/pdf-parse.js"[0m);
+  [90m   |[0m                      [31m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m20 |[0m     [36mconst[0m result = [36mawait[0m pdfParse(buffer, { verbosityLevel: [35m0[0m });
+  [90m21 |[0m
+  [90m22 |[0m     [90m// Strip null bytes and excessive whitespace[0m
+
+
+
+Import trace:
+  App Route:
+    ./lib/extraction/pdf-text.ts
+    ./lib/extraction/engine.ts
+    ./app/api/provider/ingestion/extract/route.ts
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+
+> Build error occurred
+Error: Turbopack build failed with 7 errors:
+./app/api/console/drivers/[id]/route.ts:2:1
+Module not found: Can't resolve '@/lib/auth'
+  [90m1 |[0m [36mimport[0m { [33mNextRequest[0m, [33mNextResponse[0m } [36mfrom[0m [32m"next/server"[0m;
+[31m[1m>[0m [90m2 |[0m [36mimport[0m { adminClient, verifyAuth, isAdmin } [36mfrom[0m [32m"@/lib/auth"[0m;
+  [90m  |[0m [31m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m3 |[0m
+  [90m4 |[0m [36mexport[0m [36masync[0m [36mfunction[0m [33mPATCH[0m(req: [33mNextRequest[0m, { params }: { params: [33mPromise[0m<{ id: string }>...
+  [90m5 |[0m   [36mconst[0m { id } = [36mawait[0m params;
+
+Import map: aliased to relative './lib/auth' inside of [project]/
+
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./app/api/console/drivers/route.ts:2:1
+Module not found: Can't resolve '@/lib/auth'
+  [90m1 |[0m [36mimport[0m { [33mNextRequest[0m, [33mNextResponse[0m } [36mfrom[0m [32m"next/server"[0m;
+[31m[1m>[0m [90m2 |[0m [36mimport[0m { adminClient, verifyAuth, isAdmin, isProvider } [36mfrom[0m [32m"@/lib/auth"[0m;
+  [90m  |[0m [31m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m3 |[0m
+  [90m4 |[0m [36mexport[0m [36masync[0m [36mfunction[0m [33mGET[0m(req: [33mNextRequest[0m) {
+  [90m5 |[0m   [36mconst[0m auth = [36mawait[0m verifyAuth(req);
+
+Import map: aliased to relative './lib/auth' inside of [project]/
+
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./app/api/console/parcels/[tracking_number]/payment/route.ts:2:1
+Module not found: Can't resolve '@/lib/auth'
+  [90m1 |[0m [36mimport[0m { [33mNextRequest[0m, [33mNextResponse[0m } [36mfrom[0m [32m"next/server"[0m;
+[31m[1m>[0m [90m2 |[0m [36mimport[0m { adminClient, verifyAuth, isAdmin, isCustomer } [36mfrom[0m [32m"@/lib/auth"[0m;
+  [90m  |[0m [31m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m3 |[0m
+  [90m4 |[0m [90m// POST /api/console/parcels/[tracking_number]/payment[0m
+  [90m5 |[0m [90m// Customer uploads payment proof URL; admin verifies.[0m
+
+Import map: aliased to relative './lib/auth' inside of [project]/
+
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./app/api/console/suppliers/[id]/route.ts:2:1
+Module not found: Can't resolve '@/lib/auth'
+  [90m1 |[0m [36mimport[0m { [33mNextRequest[0m, [33mNextResponse[0m } [36mfrom[0m [32m"next/server"[0m;
+[31m[1m>[0m [90m2 |[0m [36mimport[0m { adminClient, verifyAuth, isAdmin, isProvider } [36mfrom[0m [32m"@/lib/auth"[0m;
+  [90m  |[0m [31m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m3 |[0m
+  [90m4 |[0m [36mexport[0m [36masync[0m [36mfunction[0m [33mGET[0m(req: [33mNextRequest[0m, { params }: { params: [33mPromise[0m<{ id: string }> }) {
+  [90m5 |[0m   [36mconst[0m { id } = [36mawait[0m params;
+
+Import map: aliased to relative './lib/auth' inside of [project]/
+
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./app/api/console/suppliers/route.ts:2:1
+Module not found: Can't resolve '@/lib/auth'
+  [90m1 |[0m [36mimport[0m { [33mNextRequest[0m, [33mNextResponse[0m } [36mfrom[0m [32m"next/server"[0m;
+[31m[1m>[0m [90m2 |[0m [36mimport[0m { adminClient, verifyAuth, isAdmin, isProvider } [36mfrom[0m [32m"@/lib/auth"[0m;
+  [90m  |[0m [31m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m3 |[0m
+  [90m4 |[0m [36mexport[0m [36masync[0m [36mfunction[0m [33mGET[0m(req: [33mNextRequest[0m) {
+  [90m5 |[0m   [36mconst[0m auth = [36mawait[0m verifyAuth(req);
+
+Import map: aliased to relative './lib/auth' inside of [project]/
+
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./app/api/console/vehicles/[id]/route.ts:2:1
+Module not found: Can't resolve '@/lib/auth'
+  [90m1 |[0m [36mimport[0m { [33mNextRequest[0m, [33mNextResponse[0m } [36mfrom[0m [32m"next/server"[0m;
+[31m[1m>[0m [90m2 |[0m [36mimport[0m { adminClient, verifyAuth, isAdmin } [36mfrom[0m [32m"@/lib/auth"[0m;
+  [90m  |[0m [31m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m3 |[0m
+  [90m4 |[0m [36mexport[0m [36masync[0m [36mfunction[0m [33mPATCH[0m(req: [33mNextRequest[0m, { params }: { params: [33mPromise[0m<{ id: string }>...
+  [90m5 |[0m   [36mconst[0m { id } = [36mawait[0m params;
+
+Import map: aliased to relative './lib/auth' inside of [project]/
+
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./app/api/console/vehicles/route.ts:2:1
+Module not found: Can't resolve '@/lib/auth'
+  [90m1 |[0m [36mimport[0m { [33mNextRequest[0m, [33mNextResponse[0m } [36mfrom[0m [32m"next/server"[0m;
+[31m[1m>[0m [90m2 |[0m [36mimport[0m { adminClient, verifyAuth, isAdmin, isProvider } [36mfrom[0m [32m"@/lib/auth"[0m;
+  [90m  |[0m [31m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m3 |[0m
+  [90m4 |[0m [36mexport[0m [36masync[0m [36mfunction[0m [33mGET[0m(req: [33mNextRequest[0m) {
+  [90m5 |[0m   [36mconst[0m auth = [36mawait[0m verifyAuth(req);
+
+Import map: aliased to relative './lib/auth' inside of [project]/
+
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+    at <unknown> (./app/api/console/drivers/[id]/route.ts:2:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./app/api/console/drivers/route.ts:2:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./app/api/console/parcels/[tracking_number]/payment/route.ts:2:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./app/api/console/suppliers/[id]/route.ts:2:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./app/api/console/suppliers/route.ts:2:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./app/api/console/vehicles/[id]/route.ts:2:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./app/api/console/vehicles/route.ts:2:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)

@@ -38,7 +38,7 @@ const maxDateStr = () => new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOSt
 
 function calcPrice(type: string, route: Route, parcelCount: number, weightKg: number) {
   if (type === "Same-Day Express") return route.same_day_price_per_carton * parcelCount;
-  return Math.max(weightKg * route.next_day_price_per_kg, route.next_day_minimum_charge);
+  return weightKg * route.next_day_price_per_kg;
 }
 
 export default function NewParcel() {
@@ -181,7 +181,7 @@ export default function NewParcel() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {([
                   ["Same-Day Express", "RM50/carton", "Fixed departure slots", "Max 30×30×30cm · 15kg", "Arrives same day"],
-                  ["Next-Day Economy", "RM1/kg (min RM50)", "Consolidation shipment", "Max 750kg/pallet · Any size", "Moves next business day"],
+                  ["Next-Day Economy", "RM1/kg", "Consolidation shipment", "Max 750kg/pallet · Any size", "Moves next business day"],
                 ] as [string, string, string, string, string][]).map(([type, priceLabel, mode, limits, eta]) => (
                   <button key={type} onClick={() => { setServiceType(type as "Same-Day Express" | "Next-Day Economy"); setRouteId(""); setSlotId(""); }}
                     className={`text-left rounded-xl border-2 p-5 transition-colors ${serviceType === type ? "border-blue-500 bg-blue-500/10" : "border-slate-700 bg-slate-900 hover:border-slate-500"}`}>
@@ -442,7 +442,7 @@ export default function NewParcel() {
               <p className="text-xs text-slate-500">
                 {serviceType === "Same-Day Express"
                   ? `RM${selectedRoute.same_day_price_per_carton} × ${parcelCount} parcel(s)`
-                  : `max(RM${selectedRoute.next_day_price_per_kg}/kg × ${totalWeightNum}kg, RM${selectedRoute.next_day_minimum_charge} min)`}
+                  : `RM${selectedRoute.next_day_price_per_kg}/kg × ${totalWeightNum}kg`}
               </p>
             </div>
 

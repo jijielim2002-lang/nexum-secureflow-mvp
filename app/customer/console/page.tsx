@@ -47,7 +47,7 @@ export default function CustomerConsole() {
   const [wallet, setWallet]   = useState<Wallet | null>(null);
   const [loading, setLoading] = useState(true);
   const [topupAmt, setTopupAmt] = useState("");
-  const [topupProof, setTopupProof] = useState("");
+  const [topupFile, setTopupFile] = useState<File | null>(null);
   const [topupMsg, setTopupMsg] = useState("");
   const [topupLoading, setTopupLoading] = useState(false);
   const [tab, setTab] = useState<"active"|"all">("active");
@@ -71,20 +71,35 @@ export default function CustomerConsole() {
   const handleTopup = async () => {
     const amt = parseFloat(topupAmt);
     if (isNaN(amt) || amt < 100) { setTopupMsg("Minimum top-up is RM100."); return; }
-    if (!topupProof.trim()) { setTopupMsg("Please paste your payment receipt URL."); return; }
+    if (!topupFile) { setTopupMsg("Please attach your payment receipt (PDF)."); return; }
     setTopupLoading(true); setTopupMsg("");
-    const token = await getToken();
-    const res = await fetch("/api/console/wallets/topup", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ amount: amt, wallet_type: "Customer", payment_proof_url: topupProof.trim() })
-    });
-    const data = await res.json();
-    if (data.ok) {
-      setTopupMsg(`✓ Top-up request submitted for RM${amt.toFixed(2)}. Your balance will be updated after admin verifies your payment.`);
-      setTopupAmt(""); setTopupProof("");
-    } else {
-      setTopupMsg(data.error ?? "Top-up failed.");
+    try {
+      // Upload PDF to Supabase storage
+      const { supabase } = await import("@/lib/supabaseClient");
+      const filename = `${Date.now()}-${topupFile.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+      const { data: uploadData, error: uploadErr } = await supabase.storage
+        .from("console-payment-proofs")
+        .upload(filename, topupFile, { contentType: "application/pdf", upsert: false });
+      if (uploadErr) { setTopupMsg(`Upload failed: ${uploadErr.message}`); setTopupLoading(false); return; }
+      const { data: urlData } = supabase.storage.from("console-payment-proofs").getPublicUrl(uploadData.path);
+      const proofUrl = urlData.publicUrl;
+
+      const token = await getToken();
+      const res = await fetch("/api/console/wallets/topup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ amount: amt, wallet_type: "Customer", payment_proof_url: proofUrl })
+      });
+      const resData = await res.json();
+      if (resData.ok) {
+        setTopupMsg(`✓ Top-up request submitted for RM${amt.toFixed(2)}. Admin will verify your receipt and credit your wallet.`);
+        setTopupAmt(""); setTopupFile(null);
+      } else {
+        setTopupMsg(resData.error ?? "Top-up failed.");
+      }
+    } catch (e) {
+      setTopupMsg("Unexpected error. Please try again.");
+      console.error(e);
     }
     setTopupLoading(false);
   };
@@ -118,25 +133,27 @@ export default function CustomerConsole() {
             </p>
             <p className="text-xs text-slate-500 mt-1">
               Reserved: RM {Number(wallet?.reserved_balance ?? 0).toFixed(2)} &nbsp;·&nbsp;
-              SDE: RM50/parcel · NDE: RM1/kg (min RM50) · Prepaid
+              SDE: RM50/parcel · NDE: RM1/kg · Prepaid
             </p>
             <div className="mt-4 space-y-2">
-              <div className="flex gap-2">
-                <input value={topupAmt} onChange={e => setTopupAmt(e.target.value)}
-                  placeholder="Amount (min RM100)"
-                  type="number" min="100"
-                  className="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
-              </div>
-              <div className="flex gap-2">
-                <input value={topupProof} onChange={e => setTopupProof(e.target.value)}
-                  placeholder="Payment receipt URL (Google Drive / WhatsApp link)"
-                  className="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+              <input value={topupAmt} onChange={e => setTopupAmt(e.target.value)}
+                placeholder="Amount (min RM100)"
+                type="number" min="100"
+                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+              <div className="flex gap-2 items-center">
+                <label className="flex-1 cursor-pointer bg-slate-700 border border-dashed border-slate-500 hover:border-blue-500 rounded-lg px-3 py-2 text-sm transition-colors">
+                  <span className={topupFile ? "text-white" : "text-slate-400"}>
+                    {topupFile ? `📎 ${topupFile.name}` : "Attach payment receipt (PDF)"}
+                  </span>
+                  <input type="file" accept="application/pdf" className="hidden"
+                    onChange={e => setTopupFile(e.target.files?.[0] ?? null)} />
+                </label>
                 <button onClick={handleTopup} disabled={topupLoading}
                   className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 transition-colors whitespace-nowrap">
-                  {topupLoading ? "..." : "Submit Request"}
+                  {topupLoading ? "Uploading..." : "Submit Request"}
                 </button>
               </div>
-              <p className="text-xs text-slate-500">Transfer to Nexum bank account, then paste your receipt URL above. Admin will verify and credit your wallet.</p>
+              <p className="text-xs text-slate-500">Transfer to Nexum bank account → attach PDF receipt above → admin verifies and credits your wallet.</p>
             </div>
             {topupMsg && <p className={`mt-2 text-xs ${topupMsg.startsWith("✓") ? "text-emerald-400" : "text-red-400"}`}>{topupMsg}</p>}
           </div>
@@ -144,7 +161,7 @@ export default function CustomerConsole() {
             <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide">Pricing</p>
             <div className="text-sm space-y-1 text-slate-300">
               <p>SDE: <span className="font-semibold">RM50</span><span className="text-slate-500">/parcel · max 30×30×30cm · 15kg</span></p>
-              <p>NDE: <span className="font-semibold">RM1/kg</span><span className="text-slate-500"> (min RM50) · up to 750kg/pallet</span></p>
+              <p>NDE: <span className="font-semibold">RM1/kg</span><span className="text-slate-500"> · up to 750kg/pallet</span></p>
               <p className="text-xs text-slate-500">Warehouse-to-warehouse · Prepaid</p>
             </div>
             <Link href="/customer/console/new"

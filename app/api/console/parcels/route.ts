@@ -46,5 +46,5 @@ export async function POST(req: NextRequest) {
   const result = await createConsoleParcel(body, profile.userId, companyId);
 
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
-  return NextResponse.json(result.parcel, { status: 201 });
+  return NextResponse.json({ ok: true, tracking_number: result.tracking_number, ...result.parcel }, { status: 201 });
 }

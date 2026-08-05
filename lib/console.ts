@@ -50,13 +50,24 @@ export interface ConsoleParcel {
 }
 
 export interface CreateParcelInput {
-  route_id: string; slot_id: string;
+  service_type: 'Same-Day Express' | 'Next-Day Economy';
+  route_id: string;
+  slot_id?: string;         // SDE: required
+  drop_off_date?: string;   // NDE: customer drop-off date (YYYY-MM-DD)
   sender_name: string; sender_contact: string; sender_ic?: string;
   receiver_name: string; receiver_contact: string; receiver_ic?: string;
   commodity_content: string; contains_liquid: boolean; fragile: boolean;
-  parcel_length_cm: number; parcel_width_cm: number;
-  parcel_height_cm: number; parcel_weight_kg: number;
-  whatsapp_phone?: string;
+  // SDE fields
+  parcel_count?: number;
+  parcel_length_cm?: number; parcel_width_cm?: number;
+  parcel_height_cm?: number; parcel_weight_kg?: number;
+  // NDE fields
+  pallet_count?: number;
+  pallet_weight_kg?: number;  // total weight across all pallets
+  // Payment
+  payment_mode: 'wallet' | 'proof';
+  payment_proof_url?: string;
+  whatsapp_number?: string;
 }
 
 export interface ScanPayload {
@@ -217,128 +228,165 @@ export async function submitTopUpRequest(
 
 export async function createConsoleParcel(
   input: CreateParcelInput, userId: string, companyId: string
-): Promise<{ ok: boolean; parcel?: ConsoleParcel; error?: string }> {
+): Promise<{ ok: boolean; tracking_number?: string; parcel?: ConsoleParcel; error?: string }> {
   const db = adminClient();
+  const isSDE = input.service_type === 'Same-Day Express';
 
   // Validate goods
   if (isGoodsExcluded(input.commodity_content)) {
     return { ok: false, error: 'Declared goods are not accepted for console transport. General goods only.' };
   }
 
-  // Fragile/liquid flagging
-  const needsManual = (input.fragile || input.contains_liquid);
-
-  // Validate dimensions
-  if (input.parcel_length_cm > 30 || input.parcel_width_cm > 30 || input.parcel_height_cm > 30) {
-    return { ok: false, error: 'Parcel exceeds maximum size 30×30×30 cm.' };
+  // SDE-specific validation
+  if (isSDE) {
+    const l = input.parcel_length_cm ?? 0;
+    const w = input.parcel_width_cm  ?? 0;
+    const h = input.parcel_height_cm ?? 0;
+    const kg = input.parcel_weight_kg ?? 0;
+    if (l > 30 || w > 30 || h > 30) return { ok: false, error: 'Parcel exceeds maximum size 30×30×30 cm.' };
+    if (kg > 15) return { ok: false, error: 'Parcel exceeds maximum weight of 15 kg.' };
+    if (!input.slot_id) return { ok: false, error: 'Departure slot is required for Same-Day Express.' };
+  } else {
+    if (!input.drop_off_date) return { ok: false, error: 'Drop-off date is required for Next-Day Economy.' };
+    if (!input.pallet_weight_kg || input.pallet_weight_kg <= 0) return { ok: false, error: 'Total weight is required.' };
   }
-  if (input.parcel_weight_kg > 15) {
-    return { ok: false, error: 'Parcel exceeds maximum weight of 15 kg.' };
+
+  const needsManual = input.fragile || input.contains_liquid;
+
+  // Resolve slot
+  let slotId: string;
+  if (isSDE) {
+    slotId = input.slot_id!;
+    const { data: slot } = await db.from('console_route_slots').select('slot_status').eq('id', slotId).single();
+    if (!slot || !['Open','Booked'].includes(slot.slot_status)) return { ok: false, error: 'Selected slot is no longer available.' };
+  } else {
+    // Get/create NDE slot via DB function
+    const { data: ndeSlotId, error: ndeErr } = await db.rpc('console_get_or_create_nde_slot', {
+      p_route_id: input.route_id,
+      p_drop_date: input.drop_off_date
+    });
+    if (ndeErr || !ndeSlotId) return { ok: false, error: 'Could not create NDE slot: ' + ndeErr?.message };
+    slotId = ndeSlotId as string;
   }
 
-  // Check customer wallet balance
+  // Get route for warehouse IDs and pricing
+  const { data: route } = await db.from('console_routes').select('*').eq('id', input.route_id).single();
+  if (!route) return { ok: false, error: 'Invalid route.' };
+
+  // Calculate price
+  const parcelCount = input.parcel_count ?? 1;
+  const price = isSDE
+    ? parcelCount * Number(route.same_day_price_per_carton ?? 50)
+    : Number(input.pallet_weight_kg ?? 0) * Number(route.next_day_price_per_kg ?? 1);
+
+  // Wallet payment: check + deduct
   const { available, walletId } = await getWalletBalance(companyId, 'Customer');
-  if (available < 50) {
-    return { ok: false, error: `Insufficient wallet balance. Available: RM${available.toFixed(2)}. Required: RM50.00.` };
+  let curWalletBalance = available;
+  if (input.payment_mode === 'wallet') {
+    if (available < price) {
+      return { ok: false, error: `Insufficient wallet balance. Available: RM${available.toFixed(2)}. Required: RM${price.toFixed(2)}.` };
+    }
+    const { data: curWallet } = await db.from('console_wallets')
+      .select('available_balance, reserved_balance').eq('id', walletId).single();
+    curWalletBalance = Number(curWallet?.available_balance ?? 0);
+    await db.from('console_wallets').update({
+      available_balance: curWalletBalance - price,
+      reserved_balance:  Number(curWallet?.reserved_balance ?? 0) + price,
+      updated_at: new Date().toISOString()
+    }).eq('id', walletId);
+    await db.from('console_wallet_transactions').insert({
+      wallet_id: walletId, company_id: companyId,
+      transaction_type: 'Parcel Payment', amount: price, status: 'Completed',
+      reference_type: 'tracking', reference_id: 'pending',
+      description: `Parcel payment RM${price.toFixed(2)}`
+    });
   }
 
-  // Get route + slot
-  const { data: slot, error: slotErr } = await db
-    .from('console_route_slots')
-    .select('*, console_routes(*)')
-    .eq('id', input.slot_id)
-    .single();
-  if (slotErr || !slot) return { ok: false, error: 'Invalid slot selected.' };
-  if (slot.slot_status !== 'Open' && slot.slot_status !== 'Booked') {
-    return { ok: false, error: 'Selected slot is no longer available.' };
-  }
-
-  const route = slot.console_routes as ConsoleRoute;
+  // Determine statuses
+  const paymentStatus = input.payment_mode === 'wallet' ? 'Verified' : 'Payment Proof Uploaded';
+  const parcelStatus  = 'Booking Created';
 
   // Generate tracking number
   const { data: tnData } = await db.rpc('generate_console_tracking_number');
   const trackingNumber: string = tnData ?? `NX-${Date.now()}`;
 
   // Mask + encode IC
-  const senderMasked   = input.sender_ic   ? maskIC(input.sender_ic)   : null;
-  const receiverMasked = input.receiver_ic  ? maskIC(input.receiver_ic)  : null;
-  const senderEnc      = input.sender_ic   ? encodeIC(input.sender_ic)   : null;
-  const receiverEnc    = input.receiver_ic  ? encodeIC(input.receiver_ic)  : null;
-
-  // Deduct from customer wallet
-  const { data: curWallet } = await db.from('console_wallets')
-    .select('available_balance, reserved_balance').eq('id', walletId).single();
-  await db.from('console_wallets').update({
-    available_balance: Number(curWallet?.available_balance ?? 0) - 50,
-    reserved_balance:  Number(curWallet?.reserved_balance  ?? 0) + 50,
-    updated_at: new Date().toISOString()
-  }).eq('id', walletId);
-
-  // Record payment transaction
-  await db.from('console_wallet_transactions').insert({
-    wallet_id: walletId, company_id: companyId,
-    transaction_type: 'Parcel Payment', amount: 50, status: 'Completed',
-    reference_type: 'tracking', reference_id: trackingNumber,
-    description: `Parcel payment — ${trackingNumber}`
-  });
+  const senderMasked   = input.sender_ic  ? maskIC(input.sender_ic)  : null;
+  const receiverMasked = input.receiver_ic ? maskIC(input.receiver_ic) : null;
+  const senderEnc      = input.sender_ic  ? encodeIC(input.sender_ic)  : null;
+  const receiverEnc    = input.receiver_ic ? encodeIC(input.receiver_ic) : null;
 
   // Create parcel record
   const { data: parcel, error: pErr } = await db.from('console_parcels').insert({
-    tracking_number:            trackingNumber,
-    customer_company_id:        companyId,
-    customer_user_id:           userId,
-    route_id:                   input.route_id,
-    slot_id:                    input.slot_id,
-    origin_warehouse_id:        route.origin_warehouse_id,
-    destination_warehouse_id:   route.destination_warehouse_id,
-    sender_name:                input.sender_name,
-    sender_contact:             input.sender_contact,
-    sender_id_number_encrypted: senderEnc,
-    sender_id_number_masked:    senderMasked,
-    receiver_name:              input.receiver_name,
-    receiver_contact:           input.receiver_contact,
+    tracking_number:              trackingNumber,
+    customer_company_id:          companyId,
+    customer_user_id:             userId,
+    route_id:                     input.route_id,
+    slot_id:                      slotId,
+    origin_warehouse_id:          route.origin_warehouse_id,
+    destination_warehouse_id:     route.destination_warehouse_id,
+    service_type:                 input.service_type,
+    sender_name:                  input.sender_name,
+    sender_contact:               input.sender_contact,
+    sender_id_number_encrypted:   senderEnc,
+    sender_id_number_masked:      senderMasked,
+    receiver_name:                input.receiver_name,
+    receiver_contact:             input.receiver_contact,
     receiver_id_number_encrypted: receiverEnc,
-    receiver_id_number_masked:  receiverMasked,
-    commodity_content:          input.commodity_content,
-    contains_liquid:            input.contains_liquid,
-    fragile:                    input.fragile,
-    parcel_length_cm:           input.parcel_length_cm,
-    parcel_width_cm:            input.parcel_width_cm,
-    parcel_height_cm:           input.parcel_height_cm,
-    parcel_weight_kg:           input.parcel_weight_kg,
-    parcel_price:               50,
-    payment_status:             'Paid',
-    parcel_status:              'Created',
-    qr_code_value:              trackingNumber,
-    barcode_value:              trackingNumber,
-    manual_acceptance_required: needsManual,
-    whatsapp_phone:             input.whatsapp_phone,
-    nexum_commission:           5,   // 10% of RM50
-    supplier_earning:           0,   // set after completion
+    receiver_id_number_masked:    receiverMasked,
+    commodity_content:            input.commodity_content,
+    contains_liquid:              input.contains_liquid,
+    fragile:                      input.fragile,
+    // SDE dimensions
+    parcel_length_cm:             isSDE ? (input.parcel_length_cm ?? null) : null,
+    parcel_width_cm:              isSDE ? (input.parcel_width_cm  ?? null) : null,
+    parcel_height_cm:             isSDE ? (input.parcel_height_cm ?? null) : null,
+    parcel_weight_kg:             isSDE ? (input.parcel_weight_kg ?? null) : null,
+    // NDE cargo
+    pallet_count:                 isSDE ? null : (input.pallet_count ?? 1),
+    pallet_weight_kg:             isSDE ? null : (input.pallet_weight_kg ?? null),
+    parcel_price:                 price,
+    payment_status:               paymentStatus,
+    parcel_status:                parcelStatus,
+    payment_proof_url:            input.payment_proof_url ?? null,
+    qr_code_value:                trackingNumber,
+    barcode_value:                trackingNumber,
+    manual_acceptance_required:   needsManual,
+    whatsapp_number:              input.whatsapp_number ?? null,
+    nexum_commission:             price * 0.1,
+    supplier_earning:             0,
   }).select().single();
 
   if (pErr || !parcel) {
-    // Refund wallet on failure
-    await db.from('console_wallets').update({
-      available_balance: Number(curWallet?.available_balance ?? 0),
-      reserved_balance:  Number(curWallet?.reserved_balance  ?? 0),
-      updated_at: new Date().toISOString()
-    }).eq('id', walletId);
+    // Refund wallet on failure (wallet payment only)
+    if (input.payment_mode === 'wallet') {
+      await db.from('console_wallets').update({
+        available_balance: curWalletBalance,
+        updated_at: new Date().toISOString()
+      }).eq('id', walletId);
+    }
     return { ok: false, error: 'Failed to create parcel: ' + pErr?.message };
   }
 
-  // Create 'Created' event
+  // Update wallet transaction reference now we have tracking number
+  if (input.payment_mode === 'wallet') {
+    await db.from('console_wallet_transactions')
+      .update({ reference_id: trackingNumber, description: `Parcel payment RM${price.toFixed(2)} — ${trackingNumber}` })
+      .eq('reference_id', 'pending').eq('company_id', companyId);
+  }
+
+  // Create booking event
   await db.from('console_parcel_events').insert({
     tracking_number: trackingNumber,
-    event_type: 'Created',
-    event_description: 'Parcel booking confirmed. Prepaid. Awaiting drop-off at origin warehouse.',
+    event_type: 'Booking Created',
+    event_description: `${input.service_type} booking confirmed. ${input.payment_mode === 'wallet' ? 'Paid via wallet.' : 'Awaiting payment verification.'} Awaiting drop-off at origin warehouse.`,
     event_source: 'Customer'
   });
 
-  // Schedule WhatsApp (mark as pending)
-  await createWhatsAppEvent(trackingNumber, 'Created', input.whatsapp_phone ?? '');
+  // Schedule WhatsApp notification
+  await createWhatsAppEvent(trackingNumber, 'Booking Created', input.whatsapp_number ?? '');
 
-  return { ok: true, parcel: parcel as ConsoleParcel };
+  return { ok: true, tracking_number: trackingNumber, parcel: parcel as ConsoleParcel };
 }
 
 // ── Scan / Status Update ──────────────────────────────────────────────────────

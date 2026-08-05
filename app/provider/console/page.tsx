@@ -201,7 +201,7 @@ function MySlotCard({ slot }: { slot: Slot }) {
   const payout = Math.max(200, parcels * 45);
 
   return (
-    <Link href={`/provider/trips/${slot.slot_reference}`}
+    <Link href={`/provider/console/trips/${slot.slot_reference}`}
       className="block bg-slate-900 border border-slate-800 hover:border-slate-600 rounded-2xl p-5 transition-colors group">
       <div className="flex items-start gap-4">
         {/* Route column */}

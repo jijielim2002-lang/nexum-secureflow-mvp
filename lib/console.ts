@@ -483,13 +483,6 @@ export async function bookConsoleSlot(
 ): Promise<{ ok: boolean; error?: string }> {
   const db = adminClient();
 
-  // Check supplier is approved
-  const { data: company } = await db.from('companies')
-    .select('approval_status').eq('id', supplierCompanyId).single();
-  if (!company || company.approval_status !== 'approved') {
-    return { ok: false, error: 'Supplier is not approved. Await admin approval before booking slots.' };
-  }
-
   const { data: slot } = await db.from('console_route_slots')
     .select('*').eq('id', slotId).single();
   if (!slot) return { ok: false, error: 'Slot not found.' };

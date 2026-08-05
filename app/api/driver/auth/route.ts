@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
   // Find driver by phone number
   const { data: driver } = await db
     .from("console_supplier_drivers")
-    .select("id, driver_name, driver_phone, supplier_company_id, status")
+    .select("id, driver_name, driver_phone, supplier_company_id, approval_status")
     .eq("driver_phone", phone)
     .single();
 
@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No driver found with this phone number." }, { status: 401 });
   }
 
-  if (driver.status && driver.status !== "Active") {
+  if (driver.approval_status && driver.approval_status !== "Active") {
     return NextResponse.json({ error: "Driver account is not active. Contact your fleet manager." }, { status: 403 });
   }
 

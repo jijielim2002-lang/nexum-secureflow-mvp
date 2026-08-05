@@ -337,7 +337,7 @@ function OpenSlotCard({ slot, onBooked }: { slot: Slot; onBooked: () => void }) 
           <div>
             <p className="text-xs text-slate-500">Est. Payout</p>
             <p className="text-2xl font-bold text-emerald-400">RM 200<span className="text-sm font-normal text-slate-500">+</span></p>
-            <p className="text-[10px] text-slate-600 mt-0.5">RM45/parcel · min RM200</p>
+            <p className="text-[10px] text-slate-500 mt-0.5">Guaranteed min. RM200/trip</p>
           </div>
           <button onClick={() => { setExpanded(e => !e); setErr(""); }}
             className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${
@@ -353,9 +353,7 @@ function OpenSlotCard({ slot, onBooked }: { slot: Slot; onBooked: () => void }) 
       {/* Booking form */}
       {expanded && (
         <div className="mt-4 pt-4 border-t border-slate-700 space-y-3">
-          <p className="text-xs text-slate-400">
-            Book now to secure your slot. If total parcel revenue is below <strong className="text-amber-300">RM{threshold.toFixed(0)}</strong> at <strong className="text-white">11:00</strong> (1hr before departure), the slot will be rescheduled to the next business day and you will be notified.
-          </p>
+          <p className="text-xs text-slate-400">Enter your vehicle registration to confirm. Pick up all parcels at the origin warehouse before <strong className="text-white">12:00</strong> on the departure date.</p>
           {err && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{err}</p>}
           <input
             value={vehicle} onChange={e => setVehicle(e.target.value)}

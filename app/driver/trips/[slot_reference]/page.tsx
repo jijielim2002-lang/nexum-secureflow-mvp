@@ -1,189 +1,118 @@
 "use client";
 import { useState, useEffect, useRef, use } from "react";
 import Link from "next/link";
-
-async function getToken(): Promise<string> {
-  try {
-    const { supabase } = await import("@/lib/supabaseClient");
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.access_token) return session.access_token;
-  } catch { /**/ }
-  try {
-    const s = localStorage.getItem("supabase.auth.token");
-    if (s) return (JSON.parse(s) as { access_token?: string }).access_token ?? "";
-  } catch { /**/ }
-  return "";
-}
+import { useRouter } from "next/navigation";
 
 interface Parcel {
   tracking_number: string; sender_name: string; receiver_name: string;
-  parcel_weight_kg: number; fragile: boolean; contains_liquid: boolean;
-  parcel_status: string; commodity_content: string;
+  commodity_content: string; parcel_weight_kg: number;
+  fragile: boolean; contains_liquid: boolean; parcel_status: string;
+  scanned_at_origin: boolean; scanned_at_dest: boolean;
 }
-
 interface SlotDetail {
   id: string; slot_reference: string; slot_date: string;
   departure_time: string; expected_arrival_time?: string;
   slot_status: string; vehicle_number?: string;
-  actual_departure_at?: string; actual_arrival_at?: string;
+  actual_departure_at?: string;
   console_routes?: {
-    route_code: string; origin_city: string; destination_city: string; max_transit_hours: number;
+    origin_city: string; destination_city: string; route_code: string; max_transit_hours: number;
     origin_wh?: { warehouse_name: string; full_address: string };
-    dest_wh?: { warehouse_name: string; full_address: string };
+    dest_wh?:   { warehouse_name: string; full_address: string };
   };
   console_parcels?: Parcel[];
 }
 
 export default function DriverTripDetail({ params }: { params: Promise<{ slot_reference: string }> }) {
   const { slot_reference } = use(params);
-  const [slot, setSlot] = useState<SlotDetail | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [scanning, setScanning] = useState(false);
-  const [scanResult, setScanResult] = useState("");
-  const [scannedTN, setScannedTN] = useState<string | null>(null);
-  const [msg, setMsg] = useState("");
-  const [gps, setGps] = useState<{ lat: number; lng: number } | null>(null);
-  const [actionLoading, setActionLoading] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+  const router = useRouter();
+  const [slot,      setSlot]      = useState<SlotDetail | null>(null);
+  const [loading,   setLoading]   = useState(true);
+  const [token,     setToken]     = useState("");
+  const [msg,       setMsg]       = useState("");
+  const [departing, setDeparting] = useState(false);
+  const [scanningId, setScanningId] = useState<string | null>(null);
+  const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const gpsRef   = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fileRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  const load = async () => {
-    const token = await getToken();
-    const res = await fetch(`/api/console/slots/${slot_reference}`, {
-      headers: { Authorization: `Bearer ${token}` }
+  useEffect(() => {
+    const t = localStorage.getItem("driver_token") ?? "";
+    if (!t) { router.replace("/driver/login"); return; }
+    setToken(t);
+    fetch(`/api/console/slots/${slot_reference}`, { headers: { Authorization: `Bearer ${t}` } })
+      .then(r => r.json())
+      .then(d => { setSlot(d); setLoading(false); });
+  }, [slot_reference, router]);
+
+  // GPS pinging while In Progress
+  useEffect(() => {
+    if (slot?.slot_status !== "In Progress" || !slot.id) return;
+    const ping = () => {
+      navigator.geolocation?.getCurrentPosition(pos => {
+        fetch("/api/driver/location", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ slot_id: slot.id, latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy_m: pos.coords.accuracy }),
+        });
+      });
+    };
+    ping();
+    gpsRef.current = setInterval(ping, 30000);
+    return () => { if (gpsRef.current) clearInterval(gpsRef.current); };
+  }, [slot?.slot_status, slot?.id, token]);
+
+  const handleDepart = async () => {
+    setDeparting(true); setMsg("");
+    const res = await fetch(`/api/console/slots/${slot_reference}/depart`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}` }
     });
     const data = await res.json();
-    setSlot(data);
-    setLoading(false);
-  };
-
-  useEffect(() => { load(); }, [slot_reference]);
-
-  // GPS capture
-  const captureGps = () => {
-    navigator.geolocation.getCurrentPosition(
-      pos => setGps({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      () => setMsg("GPS unavailable. Proceeding without location.")
-    );
-  };
-
-  // Start QR scanner
-  const startScanner = async () => {
-    setScanning(true); setScanResult(""); setScannedTN(null);
-    captureGps();
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" }
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
-      }
-
-      // Try BarcodeDetector (Chrome/Edge)
-      if ("BarcodeDetector" in window) {
-        const bd = new (window as unknown as { BarcodeDetector: new (opts: { formats: string[] }) => { detect: (v: HTMLVideoElement) => Promise<{ rawValue: string }[]> } }).BarcodeDetector({ formats: ["qr_code", "code_128", "code_39"] });
-        const interval = setInterval(async () => {
-          if (!videoRef.current) return;
-          try {
-            const codes = await bd.detect(videoRef.current);
-            if (codes.length > 0) {
-              const value = codes[0].rawValue;
-              clearInterval(interval);
-              stopScanner();
-              setScanResult(value);
-              setScannedTN(value);
-            }
-          } catch { /**/ }
-        }, 400);
-      } else {
-        // Fallback: manual input
-        setMsg("Camera scanning not supported on this device. Please enter the tracking number manually below.");
-        setTimeout(() => stopScanner(), 5000);
-      }
-    } catch {
-      setScanning(false);
-      setMsg("Camera access denied. Enter tracking number manually.");
+    if (data.ok) {
+      setMsg("✓ Departed. GPS tracking active.");
+      setSlot(s => s ? { ...s, slot_status: "In Progress" } : s);
+    } else {
+      setMsg(data.error ?? "Failed.");
     }
+    setDeparting(false);
   };
 
-  const stopScanner = () => {
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    streamRef.current = null;
-    setScanning(false);
-  };
+  const handleScan = async (tracking: string, file?: File) => {
+    setScanningId(tracking);
+    let photo_url: string | undefined;
 
-  // Post scan event
-  const postEvent = async (trackingNumber: string, eventType: string, photoUrl?: string) => {
-    setActionLoading(true);
-    const token = await getToken();
-    const res = await fetch(`/api/console/parcels/${trackingNumber}/event`, {
+    if (file) {
+      setUploadingId(tracking);
+      try {
+        const { supabase } = await import("@/lib/supabaseClient");
+        const fname = `driver-scan-${tracking}-${Date.now()}.jpg`;
+        const { data: up } = await supabase.storage
+          .from("console-payment-proofs")
+          .upload(fname, file, { contentType: "image/jpeg", upsert: true });
+        if (up) {
+          const { data: urlData } = supabase.storage.from("console-payment-proofs").getPublicUrl(up.path);
+          photo_url = urlData.publicUrl;
+        }
+      } catch { /* ignore upload error, scan still proceeds */ }
+      setUploadingId(null);
+    }
+
+    const res = await fetch(`/api/console/parcels/${tracking}/scan`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        event_type: eventType,
-        event_description: eventType,
-        latitude: gps?.lat, longitude: gps?.lng,
-        event_location: gps ? `${gps.lat.toFixed(5)}, ${gps.lng.toFixed(5)}` : undefined,
-        photo_url: photoUrl,
-        event_source: "Driver"
-      })
+      body: JSON.stringify({ scan_type: "origin", photo_url }),
     });
     const data = await res.json();
-    if (data.ok) { setMsg(`✓ ${eventType} recorded for ${trackingNumber}`); load(); }
-    else setMsg(`Error: ${data.error}`);
-    setActionLoading(false);
-    setScannedTN(null);
-  };
-
-  // Mark slot departed/arrived
-  const updateSlot = async (action: "departed" | "arrived") => {
-    setActionLoading(true);
-    captureGps();
-    const token = await getToken();
-    const now = new Date().toISOString();
-
-    // Update slot status
-    await fetch(`/api/console/slots/${slot_reference}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        slot_status: action === "departed" ? "In Progress" : "Completed",
-        ...(action === "departed" ? { actual_departure_at: now } : { actual_arrival_at: now })
-      })
-    });
-
-    // Post event to all parcels in slot
-    for (const p of slot?.console_parcels ?? []) {
-      if (action === "departed") {
-        await postEvent(p.tracking_number, "Driver Departed");
-      }
+    if (data.ok) {
+      setSlot(s => s ? {
+        ...s,
+        console_parcels: s.console_parcels?.map(p =>
+          p.tracking_number === tracking ? { ...p, scanned_at_origin: true, parcel_status: "Received at Origin Warehouse" } : p
+        )
+      } : s);
+    } else {
+      setMsg(data.error ?? "Scan failed.");
     }
-
-    setMsg(`✓ Slot marked as ${action === "departed" ? "In Progress — Departed" : "Completed — Arrived"}`);
-    setActionLoading(false);
-    load();
-  };
-
-  // Photo capture
-  const capturePhoto = async (trackingNumber: string, eventType: string) => {
-    const input = document.createElement("input");
-    input.type = "file"; input.accept = "image/*"; input.capture = "environment";
-    input.onchange = async () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      // In production: upload to Supabase storage and get URL. For MVP: use data URL placeholder.
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const dataUrl = e.target?.result as string;
-        // Use a placeholder URL for MVP; replace with real upload in prod
-        const placeholderUrl = `[Photo captured at ${new Date().toLocaleTimeString()} — upload to storage in production]`;
-        await postEvent(trackingNumber, eventType, placeholderUrl);
-      };
-      reader.readAsDataURL(file);
-    };
-    input.click();
+    setScanningId(null);
   };
 
   if (loading) return (
@@ -191,187 +120,164 @@ export default function DriverTripDetail({ params }: { params: Promise<{ slot_re
       <p className="text-slate-400">Loading trip...</p>
     </div>
   );
-
   if (!slot) return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center">
       <p className="text-slate-400">Trip not found.</p>
     </div>
   );
 
-  const parcels = slot.console_parcels ?? [];
-  const route   = slot.console_routes;
-  const canDepart  = slot.slot_status === "Booked" || slot.slot_status === "Assigned";
-  const canArrive  = slot.slot_status === "In Progress";
-  const isComplete = slot.slot_status === "Completed";
+  const parcels      = slot.console_parcels ?? [];
+  const scannedCount = parcels.filter(p => p.scanned_at_origin).length;
+  const allScanned   = parcels.length > 0 && scannedCount === parcels.length;
+  const route        = slot.console_routes;
+  const isInProgress = slot.slot_status === "In Progress";
+  const isBooked     = slot.slot_status === "Booked";
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 pb-10">
+    <div className="min-h-screen bg-slate-950 text-slate-100 pb-8" style={{ fontFamily: "system-ui, sans-serif" }}>
       <header className="bg-slate-900 border-b border-slate-800 px-4 py-4 flex items-center gap-3 sticky top-0 z-10">
-        <Link href="/driver/trips" className="text-slate-400 text-sm">← Trips</Link>
+        <Link href="/driver" className="text-slate-500 text-sm">← Back</Link>
         <div className="flex-1">
-          <span className="font-mono text-xs text-blue-400">{slot.slot_reference}</span>
-          <p className="text-sm font-bold text-white">{route?.origin_city} → {route?.destination_city}</p>
+          <p className="font-mono text-xs text-slate-500">{slot.slot_reference}</p>
+          <p className="font-bold text-white">{route?.origin_city} → {route?.destination_city}</p>
         </div>
-        <SlotBadge status={slot.slot_status} />
+        <Link href={`/driver/trips/${slot_reference}/qr`}
+          className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs px-3 py-2 rounded-xl transition-colors">
+          QR Code
+        </Link>
       </header>
 
-      <main className="max-w-lg mx-auto px-4 py-5 space-y-4">
+      <main className="max-w-lg mx-auto px-4 py-5 space-y-5">
         {msg && (
-          <div className={`rounded-xl px-4 py-3 text-sm ${msg.startsWith("Error") ? "bg-red-500/10 text-red-300 border border-red-500/30" : "bg-emerald-500/10 text-emerald-300 border border-emerald-500/30"}`}>
+          <div className={`rounded-xl px-4 py-3 text-sm ${msg.startsWith("✓") ? "bg-emerald-500/10 text-emerald-300 border border-emerald-500/25" : "bg-red-500/10 text-red-300 border border-red-500/25"}`}>
             {msg}
           </div>
         )}
 
         {/* Trip info */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2">
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            <div><p className="text-xs text-slate-500">Date</p><p className="font-medium">{slot.slot_date}</p></div>
-            <div><p className="text-xs text-slate-500">Departure</p><p className="font-medium">{slot.departure_time?.slice(0,5)}</p></div>
-            <div><p className="text-xs text-slate-500">Est. Arrival</p><p className="font-medium">{slot.expected_arrival_time?.slice(0,5) ?? "Next day"}</p></div>
-            <div><p className="text-xs text-slate-500">Vehicle</p><p className="font-medium">{slot.vehicle_number ?? "—"}</p></div>
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+          <div className="flex gap-2 flex-wrap text-xs">
+            <span className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-300">
+              📅 {slot.slot_date}
+            </span>
+            <span className="bg-blue-500/10 border border-blue-500/20 rounded-lg px-2.5 py-1.5 text-blue-300 font-bold">
+              🕛 Departs {slot.departure_time.slice(0,5)}
+            </span>
+            {slot.expected_arrival_time && (
+              <span className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-400">
+                🏁 ETA {slot.expected_arrival_time.slice(0,5)}
+              </span>
+            )}
+            {isInProgress && (
+              <span className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5 text-amber-300 font-bold animate-pulse">
+                📍 GPS Active
+              </span>
+            )}
           </div>
           {route?.origin_wh && (
-            <p className="text-xs text-slate-400 mt-2">📍 Origin: {route.origin_wh.warehouse_name}</p>
+            <div className="text-xs text-slate-400 bg-slate-800/60 rounded-xl px-3 py-2">
+              <p className="font-semibold text-slate-300">Pickup: {route.origin_wh.warehouse_name}</p>
+              <p className="mt-0.5">{route.origin_wh.full_address}</p>
+            </div>
           )}
           {route?.dest_wh && (
-            <p className="text-xs text-slate-400">📍 Destination: {route.dest_wh.warehouse_name}</p>
+            <div className="text-xs text-slate-400 bg-slate-800/60 rounded-xl px-3 py-2">
+              <p className="font-semibold text-slate-300">Deliver to: {route.dest_wh.warehouse_name}</p>
+              <p className="mt-0.5">{route.dest_wh.full_address}</p>
+            </div>
           )}
         </div>
 
-        {/* Action buttons */}
-        {!isComplete && (
+        {/* Parcel scan list */}
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm font-semibold text-slate-300">Parcels ({scannedCount}/{parcels.length} scanned)</p>
+            {parcels.length > 0 && (
+              <div className="w-24 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: `${parcels.length ? (scannedCount/parcels.length)*100 : 0}%` }} />
+              </div>
+            )}
+          </div>
           <div className="space-y-2">
-            {canDepart && (
-              <button onClick={() => updateSlot("departed")} disabled={actionLoading}
-                className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl transition-colors disabled:opacity-50">
-                🚛 Mark Departed
-              </button>
-            )}
-            {canArrive && (
-              <button onClick={() => updateSlot("arrived")} disabled={actionLoading}
-                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 rounded-xl transition-colors disabled:opacity-50">
-                ✅ Mark Arrived at Destination
-              </button>
-            )}
-            <button onClick={startScanner} disabled={actionLoading || scanning}
-              className="w-full bg-violet-600 hover:bg-violet-500 text-white font-semibold py-3 rounded-xl transition-colors disabled:opacity-50">
-              📷 Scan Parcel QR / Barcode
-            </button>
-          </div>
-        )}
-
-        {/* Scanner overlay */}
-        {scanning && (
-          <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
-            <video ref={videoRef} className="w-full aspect-square object-cover" playsInline muted />
-            <div className="p-3 flex gap-2">
-              <button onClick={stopScanner} className="flex-1 bg-slate-700 text-slate-200 py-2 rounded-lg text-sm">Cancel</button>
-            </div>
-          </div>
-        )}
-
-        {/* Manual QR entry fallback */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <p className="text-xs text-slate-400 mb-2">Manual tracking number entry:</p>
-          <div className="flex gap-2">
-            <input value={scanResult} onChange={e => { setScanResult(e.target.value); setScannedTN(e.target.value); }}
-              placeholder="NX-YYYYMMDD-XXXXX"
-              className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
-            <button onClick={() => { if (scanResult) setScannedTN(scanResult); }}
-              className="bg-blue-600 px-3 py-2 rounded-lg text-sm text-white">
-              Find
-            </button>
-          </div>
-        </div>
-
-        {/* Scanned parcel actions */}
-        {scannedTN && (() => {
-          const p = parcels.find(p => p.tracking_number === scannedTN);
-          return (
-            <div className="bg-slate-800 border border-blue-500/30 rounded-xl p-4">
-              <p className="text-xs text-blue-400 font-mono mb-2">{scannedTN}</p>
-              {p ? (
-                <>
-                  <p className="text-sm font-medium text-white">{p.sender_name} → {p.receiver_name}</p>
-                  <p className="text-xs text-slate-400 mt-1">{p.commodity_content} · {p.parcel_weight_kg}kg</p>
-                  {p.fragile && <span className="text-xs text-amber-400">⚠ Fragile </span>}
-                  {p.contains_liquid && <span className="text-xs text-blue-400">💧 Liquid</span>}
-                  <p className="text-xs text-slate-500 mt-1">Status: {p.parcel_status}</p>
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    <button onClick={() => postEvent(scannedTN, "Driver Pickup Scan")} disabled={actionLoading}
-                      className="bg-blue-600/80 hover:bg-blue-600 text-white text-sm py-2 rounded-lg disabled:opacity-50">
-                      Pickup Scan
-                    </button>
-                    <button onClick={() => postEvent(scannedTN, "Destination Scan In")} disabled={actionLoading}
-                      className="bg-emerald-600/80 hover:bg-emerald-600 text-white text-sm py-2 rounded-lg disabled:opacity-50">
-                      Destination Scan
-                    </button>
-                    <button onClick={() => capturePhoto(scannedTN, "POD Uploaded")} disabled={actionLoading}
-                      className="bg-violet-600/80 hover:bg-violet-600 text-white text-sm py-2 rounded-lg disabled:opacity-50">
-                      📸 Photo POD
-                    </button>
-                    <button onClick={() => postEvent(scannedTN, "Exception")} disabled={actionLoading}
-                      className="bg-red-600/80 hover:bg-red-600 text-white text-sm py-2 rounded-lg disabled:opacity-50">
-                      ⚠ Exception
-                    </button>
+            {parcels.map(p => (
+              <div key={p.tracking_number}
+                className={`rounded-xl border p-4 transition-colors ${p.scanned_at_origin ? "bg-emerald-950/20 border-emerald-700/30" : "bg-slate-900 border-slate-800"}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-mono text-xs text-blue-400">{p.tracking_number}</p>
+                    <p className="text-sm font-semibold text-white mt-0.5 truncate">{p.sender_name} → {p.receiver_name}</p>
+                    <p className="text-xs text-slate-400 mt-0.5">{p.commodity_content} · {p.parcel_weight_kg}kg</p>
+                    <div className="flex gap-1 mt-1">
+                      {p.fragile       && <span className="text-[10px] bg-amber-500/15 text-amber-300 border border-amber-500/25 px-1.5 py-0.5 rounded">FRAGILE</span>}
+                      {p.contains_liquid && <span className="text-[10px] bg-blue-500/15 text-blue-300 border border-blue-500/25 px-1.5 py-0.5 rounded">LIQUID</span>}
+                    </div>
                   </div>
-                </>
-              ) : (
-                <p className="text-sm text-red-400">Tracking number not found in this trip.</p>
-              )}
-            </div>
-          );
-        })()}
-
-        {/* Parcel list */}
-        <section>
-          <h2 className="text-sm font-semibold text-slate-400 mb-2 uppercase tracking-wide">
-            Parcels ({parcels.length})
-          </h2>
-          {parcels.length === 0 && (
-            <p className="text-slate-500 text-sm">No parcels assigned to this slot yet.</p>
-          )}
-          {parcels.map(p => (
-            <div key={p.tracking_number}
-              className="bg-slate-900 border border-slate-800 rounded-xl p-3 mb-2 flex items-start justify-between">
-              <div>
-                <p className="font-mono text-xs text-blue-400">{p.tracking_number}</p>
-                <p className="text-sm text-white mt-0.5">{p.sender_name} → {p.receiver_name}</p>
-                <p className="text-xs text-slate-400">{p.commodity_content} · {p.parcel_weight_kg}kg</p>
-                <div className="flex gap-1 mt-1">
-                  {p.fragile && <span className="text-[10px] bg-amber-500/10 text-amber-400 px-1.5 py-0.5 rounded">Fragile</span>}
-                  {p.contains_liquid && <span className="text-[10px] bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded">Liquid</span>}
+                  <div className="shrink-0 flex flex-col items-end gap-2">
+                    {p.scanned_at_origin ? (
+                      <span className="text-emerald-400 text-sm font-bold">✓ Scanned</span>
+                    ) : (
+                      <>
+                        {/* Hidden file input for photo */}
+                        <input
+                          type="file" accept="image/*" capture="environment"
+                          className="hidden"
+                          ref={el => { fileRefs.current[p.tracking_number] = el; }}
+                          onChange={e => {
+                            const f = e.target.files?.[0];
+                            handleScan(p.tracking_number, f);
+                          }}
+                        />
+                        <button
+                          disabled={!!scanningId}
+                          onClick={() => fileRefs.current[p.tracking_number]?.click()}
+                          className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs px-3 py-2 rounded-xl font-semibold transition-colors">
+                          {scanningId === p.tracking_number ? (uploadingId === p.tracking_number ? "Uploading..." : "Scanning...") : "📷 Scan + Photo"}
+                        </button>
+                        <button
+                          disabled={!!scanningId}
+                          onClick={() => handleScan(p.tracking_number)}
+                          className="text-xs text-slate-500 hover:text-slate-300 transition-colors">
+                          Scan without photo
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
-              <span className={`text-[10px] px-2 py-0.5 rounded-full border ${
-                p.parcel_status === "Completed" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" :
-                p.parcel_status === "In Transit" ? "bg-blue-500/10 text-blue-400 border-blue-500/30" :
-                "bg-slate-700 text-slate-400 border-slate-600"
-              }`}>{p.parcel_status}</span>
-            </div>
-          ))}
-        </section>
+            ))}
+          </div>
+        </div>
 
-        {/* GPS status */}
-        {gps && (
-          <p className="text-xs text-slate-500 text-center">
-            📍 GPS: {gps.lat.toFixed(4)}, {gps.lng.toFixed(4)}
-          </p>
+        {/* Depart button */}
+        {isBooked && (
+          <div className={`rounded-2xl border p-4 ${allScanned ? "border-emerald-600/40 bg-emerald-950/20" : "border-slate-700 bg-slate-900"}`}>
+            {!allScanned && (
+              <p className="text-xs text-amber-400 mb-3">⚠ Scan all parcels before departing ({parcels.length - scannedCount} remaining)</p>
+            )}
+            <button
+              onClick={handleDepart}
+              disabled={departing || !allScanned}
+              className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold py-4 rounded-xl text-base transition-colors">
+              {departing ? "Marking departure..." : "🚀 Depart — Start Trip"}
+            </button>
+            <p className="text-xs text-slate-500 text-center mt-2">GPS tracking will start automatically after departure</p>
+          </div>
+        )}
+
+        {isInProgress && (
+          <div className="bg-amber-950/20 border border-amber-700/30 rounded-2xl p-4 text-center">
+            <p className="text-amber-300 font-bold text-lg">🚚 In Transit</p>
+            <p className="text-amber-200/70 text-sm mt-1">GPS location is being tracked every 30 seconds</p>
+            <p className="text-slate-400 text-xs mt-2">
+              Departed: {slot.actual_departure_at ? new Date(slot.actual_departure_at).toLocaleTimeString("en-MY", { hour:"2-digit", minute:"2-digit" }) : "—"}
+            </p>
+            <Link href={`/driver/trips/${slot_reference}/qr`}
+              className="mt-3 inline-block bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold px-6 py-3 rounded-xl transition-colors">
+              Show Arrival QR Code →
+            </Link>
+          </div>
         )}
       </main>
     </div>
-  );
-}
-
-function SlotBadge({ status }: { status: string }) {
-  const map: Record<string, string> = {
-    Booked: "bg-blue-500/15 text-blue-300 border-blue-500/30",
-    "In Progress": "bg-amber-500/15 text-amber-300 border-amber-500/30",
-    Completed: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
-  };
-  return (
-    <span className={`text-xs px-2 py-0.5 rounded-full border ${map[status] ?? "bg-slate-700 text-slate-400 border-slate-600"}`}>
-      {status}
-    </span>
   );
 }
